@@ -1,0 +1,8 @@
+**/.vscode
+**/.ipynb_checkpoints
+**/data
+**/experiments
+**/runs
+**/__pycache__
+**/wandb
+**/*.sh
