@@ -133,7 +133,7 @@ class DiscreteSBMTrainer:
             if self.use_mini_batch:
                 pi = self._get_map(true_x_start.float(), true_x_end.float())
                 i, j = self._sample_map(pi, true_x_start.shape[0])
-                true_x_start, true_x_end = true_x_start[i].reshape, true_x_end[j]
+                true_x_start, true_x_end = true_x_start[i], true_x_end[j]
 
             t = torch.randint(
                 low=1, 

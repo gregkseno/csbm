@@ -2,8 +2,8 @@
 type = "images" # choices: "toy", "images", "quantized_images"
 dim = 32
 num_categories = 256
-num_timesteps = 10
-num_skip_steps = 10
+num_timesteps = 100
+num_skip_steps = 1
 coupling_type = "independent" # choices: "independent", "prior"
 
 [model]

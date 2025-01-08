@@ -131,7 +131,7 @@ if __name__ == '__main__':
         iterations=args.train.iterations,
         inner_iterations=args.train.inner_iterations,
         prior_iterations=args.train.prior_iterations,
-        use_mini_batch=args.tran.use_mini_batch,
+        use_mini_batch=args.train.use_mini_batch,
         accelerator=accelerator,
         forward_model=forward_model,
         backward_model=backward_model,
