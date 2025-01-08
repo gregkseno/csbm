@@ -1,9 +1,10 @@
-from typing import List, Tuple
+from typing import Tuple
 
 import torch
 from torch import nn
 
-from dasbm.data import Prior, MoleculeBatch
+from dasbm.data import Molecule, Prior
+
 
 def masked_softmax(x: torch.Tensor, mask: torch.Tensor, **kwargs):
     if mask.sum() == 0:
@@ -11,110 +12,6 @@ def masked_softmax(x: torch.Tensor, mask: torch.Tensor, **kwargs):
     x_masked = x.clone()
     x_masked[mask == 0] = -float("inf")
     return torch.softmax(x_masked, **kwargs)
-
-def apply_mask(
-    nodes: torch.Tensor, 
-    edges: torch.Tensor,
-    mask: torch.Tensor, 
-    collapse: bool = False
-):
-    nodes_mask = mask.unsqueeze(-1) # bs, n, 1
-    edges_mask1 = nodes_mask.unsqueeze(2) # bs, n, 1, 1
-    edges_mask2 = nodes_mask.unsqueeze(1) # bs, 1, n, 1
-
-    if collapse:
-        nodes = torch.argmax(nodes, dim=-1)
-        edges = torch.argmax(edges, dim=-1)
-
-        nodes[mask == 0] = -1
-        edges[(edges_mask1 * edges_mask2).squeeze(-1) == 0] = -1
-    else:
-        nodes = nodes * nodes_mask
-        edges = edges * edges_mask1 * edges_mask2
-        assert torch.allclose(edges, torch.transpose(edges, 1, 2))
-    return nodes, edges
-
-class DiffusionModel(nn.Module):
-    def __init__(
-         self,
-         input_dim: int,
-         num_categories: int, 
-         num_timesteps: int,
-         timestep_dim: int = 2, 
-         layers: List[int] = [128, 128, 128],
-     ) -> None: 
-        super().__init__()
-        self.input_dim = input_dim
-        self.num_categories = num_categories
-        self.num_timesteps = num_timesteps
-        net = []
-        ch_prev = input_dim + timestep_dim
-        for ch_next in layers:
-            net.extend([nn.Linear(ch_prev, ch_next), nn.ReLU()])
-            ch_prev = ch_next
-        net.append(nn.Linear(ch_prev, num_categories * input_dim))
-        self.net = nn.Sequential(*net)
-        self.timestep_embedding = nn.Embedding(num_timesteps + 2, timestep_dim)
-    
-    def forward(self, x_t: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        x_start_logits = self.net(torch.cat([x_t, self.timestep_embedding(t)], dim=1))
-        return x_start_logits.reshape(-1, self.input_dim, self.num_categories)
-         
-
-class D3PM(nn.Module):
-    def __init__(
-        self,
-        model: nn.Module,
-        prior: Prior,
-    ) -> None:
-        super().__init__()
-        self.model = model
-        self.prior = prior
-        self.num_categories = model.num_categories
-        self.num_timesteps = model.num_timesteps
-        self.eps = 1e-6
-
-
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        return self.model(x, t)
-
-    def markov_sample(self, x: torch.Tensor, t: torch.Tensor):
-        """Samples from $p(x_{t-1} | x_{t}, \hat{x_{0}})$, where $\hat{x_{0}} \sim m_{\theta}(\hat{x_{0}} | x_{t})$.""" # type: ignore
-        # noise = torch.rand((*x.shape, self.num_categories), device=self.device)
-        # noise = torch.clip(noise, self.eps, 1.0)
-        # gumbel_noise = -torch.log(-torch.log(noise))
-        # not_first_step = (t != 1).float().reshape((x.shape[0], *[1] * (x.dim())))
-        batch_size, dim = x.shape[:2]
-
-        pred_x_end_logits = self(x, t)
-        pred_q_posterior_logits = self.prior.q_posterior_logits(pred_x_end_logits, x, t)
-        probs = pred_q_posterior_logits.softmax(-1)
-        probs = probs.reshape(batch_size * dim, -1)
-        # remove gumbel noise at `t==1` because we already have correct logits
-        # torch.argmax(pred_q_posterior_logits + gumbel_noise * not_first_step, dim=-1)
-        return probs.multinomial(num_samples=1).reshape(x.shape)
-        
-    @torch.no_grad()
-    def sample(self, x: torch.Tensor) -> torch.Tensor:
-        for t in reversed(range(1, self.num_timesteps + 2)):
-            t = torch.tensor([t] * x.shape[0], device=self.device)
-            x = self.markov_sample(x, t)
-        return x
-    
-    @torch.no_grad()
-    def sample_trajectory(self, x: torch.Tensor) -> torch.Tensor:
-        trajectory = [x]
-        for t in reversed(range(1, self.num_timesteps + 2)):
-            t = torch.tensor([t] * x.shape[0], device=self.device)
-            x = self.markov_sample(x, t)
-            trajectory.append(x)
-        trajectory = torch.stack(trajectory, dim=0)
-        return trajectory
-    
-    @property
-    def device(self):
-        return next(self.parameters()).device
-
 
 class Nodes2Features(nn.Module):
     def __init__(self, input_dim: int, features_dim: int):
@@ -441,8 +338,7 @@ class GraphTransformer(nn.Module):
         new_edges = self.edges_input_net(edges)
         new_edges = (new_edges + new_edges.transpose(1, 2)) / 2
         new_features = self.features_input_net(features)
-
-        (new_nodes, new_edges), new_features = apply_mask(new_nodes, new_edges, mask), new_features
+        new_nodes, new_edges, new_features = Molecule.apply_mask(new_nodes, new_edges, new_features, mask) 
 
         for layer in self.transformer:
             new_nodes, new_edges, new_features = layer(new_nodes, new_edges, new_features, mask)
@@ -456,62 +352,76 @@ class GraphTransformer(nn.Module):
         new_features = new_features + features_to_out
 
         new_edges = 1/2 * (new_edges + torch.transpose(new_edges, 1, 2))
-        (new_nodes, new_edges), new_features = apply_mask(new_nodes, new_edges, mask), new_features
+        new_nodes, new_edges, new_features = Molecule.apply_mask(new_nodes, new_edges, new_features, mask) 
         return new_nodes, new_edges, new_features
 
-# class DiGress(nn.Module):
-#     def __init__(
-#         self,
-#         model: GraphTransformer,
-#         prior: Prior,
-#     ) -> None:
-#         super().__init__()
-#         self.model = model
-#         self.prior = prior
-#         self.num_node_categories = model.nodes_input_dim
-#         self.num_edge_categories = model.edges_input_dim
-#         self.num_timesteps = model.num_timesteps
-#         self.eps = 1e-6
+class DiGress(nn.Module):
+    def __init__(
+        self,
+        model: GraphTransformer,
+    ) -> None:
+        super().__init__()
+        self.model = model
+        self.num_node_categories = model.nodes_input_dim
+        self.num_edge_categories = model.edges_input_dim
+        self.num_timesteps = model.num_timesteps
 
-#     def forward(self, data: MoleculeBatch, t: torch.Tensor) -> MoleculeBatch:
-#         (nodes, edges, mask), features = data.to_dense(), data.y
-#         features = torch.concat([features, t], dim=-1)
-#         nodes, edges, features = self.model(nodes, edges, features, mask)
-#         batch = MoleculeBatch(nodes, edges, features, mask)
-#         return batch
+    def forward(self, data: Molecule, t: torch.Tensor) -> Molecule:
+        nodes, edges, features, mask = data.nodes, data.edges, data.features, data.mask
+        features = torch.concat([features, t], dim=-1)
+        nodes, edges, features = self.model(nodes, edges, features, mask)
+        batch = Molecule(nodes, edges, features, mask) # возвращает логиты
+        return batch
 
-#     def markov_sample(self, data: MoleculeBatch, t: torch.Tensor) -> MoleculeBatch:
-#         """Samples from $p(x_{t-1} | x_{t}, \hat{x_{0}})$, where $\hat{x_{0}} \sim m_{\theta}(\hat{x_{0}} | x_{t})$.""" # type: ignore
-#         not_first_step = (t != 1).float().reshape((data.shape[0], *[1] * (data.dim())))
+    def markov_sample(self, data: Molecule, t: torch.Tensor) -> Molecule:
+        """Samples from $p(x_{t-1} | x_{t}, \hat{x_{0}})$, where $\hat{x_{0}} \sim m_{\theta}(\hat{x_{0}} | x_{t})$.""" # type: ignore
+        # No noise when t == 1
+        # NOTE: for t=1 this just "samples" from the argmax
+        #   as opposed to "sampling" from the mean in the gaussian case.
+        batch_size = data.nodes.shape[0]
+        
+        pred_data_end_logits = self(data, t)
+        pred_q_posterior_logits = self.prior.q_posterior(
+            pred_data_end_logits, data, t, logits=True
+        )
+        # Nodes
+        pred_q_node_posterior_logits, pred_q_edge_posterior_logits = pred_q_posterior_logits.nodes, pred_q_posterior_logits.edges
+        first_step_node = (t == 1).long().reshape((batch_size, *[1] * (pred_q_node_posterior_logits.dim() - 1)))        
+        nodes_probs = pred_q_node_posterior_logits.softmax(dim=-1).reshape(-1, self.num_node_categories)
+        nodes_random_samples = nodes_probs.multinomial(num_samples=1).reshape(pred_q_node_posterior_logits.shape[:-1]) # Wihtout last dimension of categories
 
-#         nodes_noise = torch.rand(data.x.shape, device=self.device)
-#         nodes_noise = torch.clip(nodes_noise, self.eps, 1.0)
-#         gumbel_nodes_noise = -torch.log(-torch.log(nodes_noise))
+        node_argmax_samples = pred_q_node_posterior_logits.argmax(dim=-1)
+        nodes = first_step_node * node_argmax_samples + (1 - first_step_node) * nodes_random_samples
+
+        first_step_edge = (t == 1).long().reshape((batch_size, *[1] * (pred_q_edge_posterior_logits.dim() - 1)))
+        edges_probs = pred_q_edge_posterior_logits.softmax(dim=-1).reshape(-1, self.num_edge_categories)
+        edges_random_samples = edges_probs.multinomial(num_samples=1).reshape(pred_q_edge_posterior_logits.shape[:-1]) # Wihtout last dimension of categories
+
+        edge_argmax_samples = pred_q_edge_posterior_logits.argmax(dim=-1)
         
+        edges = first_step_edge * edge_argmax_samples + (1 - first_step_edge) * edges_random_samples
+        batch = Molecule(nodes, edges, pred_data_end_logits.features, data.mask)
+        return batch
         
-#         pred_x_end_logits = self(data, t)
-#         pred_q_posterior_logits = self.prior.q_posterior_logits(pred_x_end_logits, data, t)
-#         # remove gumbel noise at `t==1` because we already have correct logits
-#         torch.argmax(pred_q_posterior_logits + gumbel_noise * not_first_step, dim=-1)
-#         return MoleculeBatch(nodes, edges, features, mask)
-        
-#     @torch.no_grad()
-#     def sample(self, data: MoleculeBatch) -> MoleculeBatch:
-#         for t in reversed(range(1, self.num_timesteps + 2)):
-#             t = torch.tensor([t] * data.shape[0], device=self.device)
-#             data = self.markov_sample(data, t)
-#         return data
+    @torch.no_grad()
+    def sample(self, data: Molecule, prior: Prior) -> Molecule:
+        batch_size = data.nodes.shape[0]
+        for t in reversed(range(1, self.num_timesteps + 2)):
+            t = torch.tensor([t] * batch_size, device=self.device)
+            data = self.markov_sample(data, t)
+        return data
     
-#     @torch.no_grad()
-#     def sample_trajectory(self, data: torch.Tensor) -> List[MoleculeBatch]:
-#         trajectory = [data]
-#         for t in reversed(range(1, self.num_timesteps + 2)):
-#             t = torch.tensor([t] * data.shape[0], device=self.device)
-#             features = 
-#             data = self.markov_sample(data, features)
-#             trajectory.append(data)
-#         return trajectory
+    # @torch.no_grad()
+    # def sample_trajectory(self, data: MoleculeBatch) -> MoleculeBatch:
+    #     batch_size = data.nodes.shape[0]
+    #     trajectory = [data]
+    #     for t in reversed(range(1, self.num_timesteps + 2)):
+    #         t = torch.tensor([t] * batch_size, device=self.device)
+    #         data = self.markov_sample(data, t)
+    #         trajectory.append(data)
+    #     trajectory = MoleculeBatch.stack(trajectory, dim=1)
+    #     return trajectory
     
-#     @property
-#     def device(self):
-#         return next(self.parameters()).device
+    @property
+    def device(self):
+        return next(self.parameters()).device

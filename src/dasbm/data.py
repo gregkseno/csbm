@@ -1,139 +1,414 @@
-from typing import Literal, Optional, Tuple
-import os
+from typing import Any, Iterable, List, Literal, Optional, Tuple, Union
 
 import numpy as np
+import ot
 from sklearn.datasets import make_swiss_roll
+from PIL import Image
+import pandas as pd
+import os
 import torch
 from torch import nn
+from torch.utils.data import Dataset, TensorDataset
+from torchvision import transforms
+
 from rdkit import Chem
-from torch_geometric.utils import to_dense_adj, to_dense_batch, remove_self_loops, one_hot
+from rdkit.Chem.rdchem import BondType
+import random
+
+from torchvision import transforms, datasets
+from torch_geometric.utils import to_dense_adj, to_dense_batch, remove_self_loops, one_hot, from_smiles
 from torch_geometric.data import Batch, Data, InMemoryDataset
 
 import logging
 from tqdm.auto import tqdm
 tqdm.pandas()
 
+from dasbm.models.vq import VectorQuantizer2
 from dasbm.utils import broadcast
 
 #########################
 #       MARGINALS       #
 #########################
-class Sampler:
-    num_categories: int    
+class BaseDataset(Dataset):
+    dataset: Any
 
-    def __init__(self):
-        pass
+    def __init__(self, *args, **kwargs):
+        super().__init__()
 
-    def __call__(self, batch_size: int) -> torch.Tensor:
-        return self.sample(batch_size)
-
-    def sample(self, batch_size: int) -> torch.Tensor:
-        raise NotImplementedError('Abstract Class')
+    def __getitem__(self, idx):
+        return self.dataset[idx]
     
-    def continuous_to_discrete(self, batch: torch.Tensor | np.ndarray):
+    def __len__(self):
+        return len(self.dataset)
+
+    def continuous_to_discrete(self, batch: Union[torch.Tensor, np.ndarray], num_categories: int):
         if isinstance(batch, np.ndarray):
             batch = torch.tensor(batch)
-        bin_edges = torch.linspace(batch.min(), batch.max(), self.num_categories - 1)
-        discrete_batch = torch.bucketize(batch, bin_edges)
+        batch_min = batch.min(dim=0).values
+        batch_max = batch.max(dim=0).values
+
+        discrete_batch = torch.zeros_like(batch, dtype=torch.int64)
+        for dim, (minn, maxx) in enumerate(zip(batch_min, batch_max)):  
+            bin_edges = torch.linspace(minn, maxx, num_categories - 1)
+            discrete_batch[:, dim] = torch.bucketize(batch[:, dim].contiguous(), bin_edges)
         return discrete_batch
     
-    def __str__(self):
-        return self.__class__.__name__
+    def repeat(self, n: int, max_len: int):
+        self.dataset = self.dataset.repeat((n,) + (1,) * (self.dataset.dim()-1))
+        self.dataset = self.dataset[:max_len]
     
 
-class DiscreteGaussianSampler(Sampler):
-    def __init__(self, dim: int, num_categories: int = 100):
-        super().__init__()        
-        self.dim = dim
-        self.num_categories = num_categories
+class DiscreteGaussianDataset(BaseDataset):
+    def __init__(self, n_samples: int, dim: int, num_categories: int = 100, train: bool = True):
+        dataset = torch.randn(size=[n_samples, dim])
+        dataset = self.continuous_to_discrete(dataset, num_categories)
+        if not train:
+            dataset[:4] = torch.tensor([[25, 48], [45, 25], [25, 5], [5, 20]])      
 
-    def sample(self, batch_size: int) -> torch.Tensor:
-        batch = torch.randn(size=[batch_size, self.dim])
-        return self.continuous_to_discrete(batch)
+        self.dataset = dataset
     
-class DiscreteSwissRollSampler(Sampler):
-    def __init__(self, noise: float = 0.8, num_categories: int = 100):
-        super().__init__()
-        self.num_categories = num_categories
-        self.noise = noise
+class DiscreteSwissRollDataset(BaseDataset):
+    def __init__(self, n_samples: int, noise: float = 0.8, num_categories: int = 100, train: bool = True):
+        dataset = make_swiss_roll(
+            n_samples=n_samples,
+            noise=noise
+        )[0][:, [0, 2]]
+        dataset = self.continuous_to_discrete(dataset, num_categories)
+        if not train:
+            dataset[:4] = torch.tensor([[25, 25], [46, 4], [6, 44], [49, 49]])
+        self.dataset = dataset      
+    
+class DiscreteColoredMNISTDataset(BaseDataset):
+    def __init__(
+        self, 
+        target_digit: int, 
+        data_dir: str, 
+        train: bool = True, 
+        img_size: int = 32
+    ):
         
-    def sample(self, batch_size: int) -> torch.Tensor:
-        batch = make_swiss_roll(
-            n_samples=batch_size,
-            noise=self.noise
-        )[0][:, [0, 2]] / 7.5
-        return self.continuous_to_discrete(batch)
-    
-def encode_no_edge(edges: torch.Tensor):
-    assert len(edges.shape) == 4
-    if edges.shape[-1] == 0:
-        return edges
-    no_edge = torch.sum(edges, dim=3) == 0
-    first_elt = edges[:, :, :, 0]
-    first_elt[no_edge] = 1
-    edges[:, :, :, 0] = first_elt
-    diag = torch.eye(edges.shape[1], dtype=torch.bool).unsqueeze(0).expand(edges.shape[0], -1, -1)
-    edges[diag] = 0
-    return edges
-    
-class MoluculeData(Data):
-    x: torch.Tensor
-    edge_index: torch.Tensor
-    edge_attr: torch.Tensor
-    y: torch.Tensor
+        transform = transforms.Compose([
+            transforms.Resize((img_size, img_size)),
+            transforms.ToTensor(),
+            transforms.Lambda(lambda image: self._get_random_colored_images(image))
+        ])
+        
+        dataset = datasets.MNIST(data_dir, train=train, transform=transform, download=True)
+        dataset = torch.stack(
+            [dataset[i][0] for i in range(len(dataset.targets)) if dataset.targets[i] == target_digit],
+            dim=0
+        )
+        dataset = (255 * dataset).to(dtype=torch.int64)
+        self.dataset = dataset      
 
-class MoleculeBatch(Batch):
-    x: torch.Tensor
-    edge_index: torch.Tensor
-    edge_attr: torch.Tensor
-    y: torch.Tensor
-    batch: torch.Tensor
-    max_num_nodes: int
+    def _get_random_colored_images(self, image: torch.Tensor):
+        hue = 360 * torch.rand(1)
+        image_min = 0
+        image_diff = (image - image_min) * (hue % 60) / 60
+        image_inc = image_diff
+        image_dec = image - image_diff
+        colored_image = torch.zeros((3, image.shape[1], image.shape[2]))
+        H_i = torch.round(hue / 60) % 6 # type: ignore
+        
+        if H_i == 0:
+            colored_image[0] = image
+            colored_image[1] = image_inc
+            colored_image[2] = image_min
+        elif H_i == 1:
+            colored_image[0] = image_dec
+            colored_image[1] = image
+            colored_image[2] = image_min
+        elif H_i == 2:
+            colored_image[0] = image_min
+            colored_image[1] = image
+            colored_image[2] = image_inc
+        elif H_i == 3:
+            colored_image[0] = image_min
+            colored_image[1] = image_dec
+            colored_image[2] = image
+        elif H_i == 4:
+            colored_image[0] = image_inc
+            colored_image[1] = image_min
+            colored_image[2] = image
+        elif H_i == 5:
+            colored_image[0] = image
+            colored_image[1] = image_min
+            colored_image[2] = image_dec
+        
+        return colored_image
+    
+
+class CelebaDataset(BaseDataset):
+    def __init__(
+        self, 
+        sex: Literal['male', 'female'], 
+        data_dir: str,
+        size: int = 128, 
+        transform: Optional[None] = None, 
+        train: bool = True
+    ):
+        self.transform = transform if transform else transforms.Compose([
+            transforms.Resize((size, size)),
+            transforms.ToTensor(),
+        ])
+        attrs = pd.read_csv(os.path.join(data_dir, 'celeba', 'list_attr_celeba.csv'))
+        if sex == 'male':
+            attrs = attrs[attrs['Male'] != -1] # only males
+        else:
+            attrs = attrs[attrs['Male'] == -1]
+
+        split = pd.read_csv(os.path.join(data_dir, 'celeba', 'list_eval_partition.csv'))
+        if train:
+            split = split[split['partition'] == 0]
+        else:
+            split = split[split['partition'] != 0]
+
+        image_names = pd.merge(attrs, split, on=['image_id'], how='inner')
+        image_names = image_names['image_id'].tolist()
+        self.dataset = [os.path.join(data_dir, 'celeba', 'img_align_celeba', 'img_align_celeba', image) for image in image_names]
+        
+    def __getitem__(self, index):
+        image = Image.open(self.dataset[index])
+        image = image.convert('RGB')
+        image = self.transform(image)
+        return image
+
+    def __len__(self):
+        return len(self.dataset)
+    
+    def repeat(self, n: int, max_len: int):
+        self.dataset = self.dataset * n
+        self.dataset = self.dataset[:max_len]
+        
+class CouplingDataset(BaseDataset):
+    def __init__(
+        self, 
+        dataset: BaseDataset, 
+        conditional: BaseDataset, 
+        type: Literal['independent', 'prior', 'mini_batch'] = 'independent',
+        prior: Optional['Prior'] = None
+    ):
+        self.type = type
+        self.prior = prior
+
+        if len(dataset) != len(conditional):
+            max_len = max(len(dataset), len(conditional))
+            if len(dataset) < max_len:
+                times = (max_len + len(dataset) - 1) // len(dataset)
+                dataset.repeat(times, max_len)
+
+            if len(conditional) < max_len:
+                times = (max_len + len(conditional) - 1) // len(conditional)
+                conditional.repeat(times, max_len)
+
+        self.dataset = dataset
+        self.conditional = conditional
+
+    def __getitem__(self, idx):
+        x, y = self.dataset[idx], self.conditional[idx]
+        if self.type == 'mini_batch':
+            # TODO: Fix bug because x and y is not a mini-batch
+            pi = self._get_map(x.float(), y.float())
+            i, j = self._sample_map(pi, x.shape[0])
+            x, y = x[i], y[j]
+        elif self.type == 'prior':
+            raise NotImplementedError('Only prior and independent couplings are now supported!')
+        return x, y
+    
+    def _get_map(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        a, b = ot.unif(x.shape[0]), ot.unif(y.shape[0])
+        if x.dim() > 2:
+            x = x.reshape(x.shape[0], -1)
+        if y.dim() > 2:
+            y = y.reshape(y.shape[0], -1)
+        y = y.reshape(y.shape[0], -1)
+        M = torch.cdist(x, y) ** 2
+        p = ot.emd(a, b, M.detach().cpu().numpy())
+        return p # type: ignore
+    
+    def _sample_map(self, pi: torch.Tensor, batch_size: int):
+        p = pi.flatten()
+        p = p / p.sum()
+        choices = np.random.choice(pi.shape[0] * pi.shape[1], p=p, size=batch_size)
+        return np.divmod(choices, pi.shape[1])
+
+
+class Molecule:
+    nodes: torch.Tensor
+    edges: torch.Tensor
+    mask: torch.Tensor
+    # num_node_categories: int
+    # num_edge_categories: int
 
     def __init__(
         self,
         nodes: torch.Tensor, 
         edges: torch.Tensor, 
         features: torch.Tensor, 
-        mask: torch.Tensor
+        mask: torch.Tensor,
+        collapse: bool = False
     ):
-        # TODO: from_dense implementation
-        pass
+        self.nodes = nodes
+        self.edges = edges
+        self.features = features
+        self.mask = mask
+        self._apply_mask(collapse)
 
-    def to_dense(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        nodes, mask = to_dense_batch(
-            x=self.x, 
-            batch=self.batch, 
-            max_num_nodes=self.max_num_nodes
-        )
+    def __str__(self):
+        return f'Molecule(nodes={self.nodes.shape}, edges={self.edges.shape}, features={self.features.shape}, mask={self.mask.shape})'
+    
+    def __repr__(self):
+        return f'Molecule(nodes={self.nodes.shape}, edges={self.edges.shape}, features={self.features.shape}, mask={self.mask.shape})'
+    
+    @staticmethod
+    def from_sparse(
+        x: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_attr: torch.Tensor,
+        y: torch.Tensor,
+        batch: torch.Tensor,
+    ) -> Union['Molecule', torch.Tensor]:
+        nodes, mask = to_dense_batch(x=x, batch=batch)
         edge_index, edge_attr = remove_self_loops(
-            edge_index=self.edge_index, 
-            edge_attr=self.edge_attr
-        )
+            edge_index=edge_index, 
+            edge_attr=edge_attr
+        ) # type: ignore # return it!!!!
         edges = to_dense_adj(
             edge_index=edge_index, 
-            batch=self.batch, 
+            batch=batch, 
             edge_attr=edge_attr, 
-            max_num_nodes=self.max_num_nodes
+            max_num_nodes=nodes.shape[1]
         )
-        edges = encode_no_edge(edges)
-        return nodes.float(), edges.float(), mask
+        edges = Molecule.encode_no_edge(edges)
+        return Molecule(nodes=nodes, edges=edges, features=y, mask=mask)
+
     
-class MoleculeDatasetSampler(Sampler):
-    def __init__(self, dataset: InMemoryDataset, mean: float, std: float):
+    @staticmethod
+    def encode_no_edge(edges: torch.Tensor):
+        assert len(edges.shape) == 4
+        if edges.shape[-1] == 0:
+            return edges
+        no_edge = torch.sum(edges, dim=3) == 0
+        first_elt = edges[:, :, :, 0]
+        first_elt[no_edge] = 1
+        edges[:, :, :, 0] = first_elt
+        diag = torch.eye(edges.shape[1], dtype=torch.bool).unsqueeze(0).expand(edges.shape[0], -1, -1)
+        edges[diag] = 0
+        return edges
+    
+    def to(self, kwargs) -> 'Molecule':
+        self.nodes = self.nodes.to(**kwargs)
+        self.edges = self.edges.to(**kwargs)
+        self.features = self.features.to(**kwargs)
+        return self
+    
+    # @staticmethod
+    # def stack(batches: 'List[MoleculeBatch]', dim: int = 0):
+    #     nodes_trajectory, edges_trajectory, features_trajectory = [], [], []
+    #     for batch in batches:
+    #         nodes_trajectory.append(batch.nodes)
+    #         edges_trajectory.append(batch.edges)
+    #         features_trajectory.append(batch.features)
+
+    #     nodes_trajectory = torch.stack(nodes_trajectory, dim=dim)
+    #     edges_trajectory = torch.stack(edges_trajectory, dim=dim)
+    #     features_trajectory = torch.stack(features_trajectory, dim=dim)
+        
+    #     return MoleculeBatch(
+    #         nodes=nodes_trajectory, 
+    #         edges=edges_trajectory, 
+    #         features=features_trajectory,
+    #         mask=masks
+    #     )
+    
+    def _apply_mask(self, collapse: bool = False) -> 'Molecule':
+        nodes_mask = self.mask.unsqueeze(-1) # bs, n, 1
+        edges_mask1 = nodes_mask.unsqueeze(2) # bs, n, 1, 1
+        edges_mask2 = nodes_mask.unsqueeze(1) # bs, 1, n, 1
+
+        if collapse:
+            self.nodes = torch.argmax(self.nodes, dim=-1)
+            self.edges = torch.argmax(self.edges, dim=-1)
+
+            self.nodes[self.mask == 0] = -1
+            self.edges[(edges_mask1 * edges_mask2).squeeze(-1) == 0] = -1
+        else:
+            self.nodes = self.nodes * nodes_mask
+            self.edges = self.edges * edges_mask1 * edges_mask2
+            assert torch.allclose(self.edges, torch.transpose(self.edges, 1, 2))
+        return self
+    
+    @staticmethod
+    def apply_mask(
+        nodes: torch.Tensor, 
+        edges: torch.Tensor, 
+        features: torch.Tensor, 
+        mask: torch.Tensor,
+        collapse: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Does not apply mask to `features`"""
+        batch = Molecule(nodes, edges, features, mask, collapse)
+        return batch.nodes, batch.edges, batch.features
+
+        
+class MoleculeDatasetSampler(TensorDataset):
+    def __init__(self, smiles: Iterable[str], mean: float = 2, std: float = 0.5):
         super().__init__()
         self.logger = logging.getLogger('DatasetSampler')
-        self.dataset = dataset
+        self.dataset = self.preprocess(smiles)
         # TODO: mean, std filtration
+        # TODO: make data non one-hot
         self.last_index = 0
 
-    def sample(self, batch_size: int) -> MoleculeBatch:
+    def preprocess(self, smiles: Iterable[str]) -> List[Data]:
+        # TODO add filtration
+        atom_types = {atom: i for i, atom in enumerate(['C', 'N', 'S', 'O', 'F', 'Cl', 'Br', 'H'])}
+        bonds_types = {BondType.SINGLE: 0, BondType.DOUBLE: 1, BondType.TRIPLE: 2, BondType.AROMATIC: 3}
+
+        mols = []
+        for i, smile in enumerate(tqdm(smiles)):
+            mol = Chem.MolFromSmiles(smile)
+            N = mol.GetNumAtoms()
+
+            type_idx = []
+            for atom in mol.GetAtoms(): # type: ignore
+                type_idx.append(atom_types[atom.GetSymbol()])
+
+            row, col, edge_type = [], [], []
+            for bond in mol.GetBonds(): # type: ignore
+                start, end = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+                row += [start, end]
+                col += [end, start]
+                edge_type += 2 * [bonds_types[bond.GetBondType()] + 1]
+
+            if len(row) == 0:
+                continue
+
+            edge_index = torch.tensor([row, col], dtype=torch.long)
+            edge_type = torch.tensor(edge_type, dtype=torch.long)
+            edge_attr = torch.nn.functional.one_hot(edge_type, num_classes=len(bonds_types) + 1).to(torch.float)
+
+            perm = (edge_index[0] * N + edge_index[1]).argsort()
+            edge_index = edge_index[:, perm]
+            edge_attr = edge_attr[perm]
+
+            x = torch.nn.functional.one_hot(torch.tensor(type_idx), num_classes=len(atom_types)).float()
+            y = torch.zeros(size=(1, 0), dtype=torch.float)
+
+            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, idx=i)
+            mols.append(data)
+
+        return mols
+
+    def sample(self, batch_size: int) -> Union[Molecule, torch.Tensor]:
         assert batch_size <= len(self.dataset), f'Bach size: {batch_size} is larger than length of dataset: {len(self.dataset)}'
         if self.last_index + batch_size >= len(self.dataset):
             self.last_index = 0
-            self.dataset = self.dataset.shuffle() # type: ignore
-        batch_indices = torch.arange(self.last_index, self.last_index + batch_size)         
-        batch = MoleculeBatch.from_data_list(self.dataset[batch_indices]) # type: ignore
+            random.shuffle(self.dataset)
+        batch = Batch.from_data_list(self.dataset[self.last_index:self.last_index + batch_size]) # type: ignore
+        batch = Molecule.from_sparse(
+            batch.x, batch.edge_index, batch.edge_attr, batch.y, batch.batch # type: ignore
+        )
         self.last_index += batch_size
         return batch
 
@@ -152,121 +427,213 @@ def get_cum_matrices(onestep_matrices: torch.Tensor) -> torch.Tensor:
     assert onestep_matrices.shape == cum_matrices.shape, f'Wrong shape!'
     return cum_matrices
     
-def random_jump_prior(
+def uniform_prior(
     alpha: float, 
     num_categories: int, 
-    num_timesteps: int
+    num_timesteps: int,
+    num_skip_steps: int
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    q_onestep_mats = torch.tensor([alpha / (num_categories - 1)] * num_categories**2, dtype=torch.float64)
-    q_onestep_mats = q_onestep_mats.reshape(num_categories, num_categories)
-    q_onestep_mats -= torch.diag(torch.diag(q_onestep_mats))
-    q_onestep_mats += torch.diag(torch.tensor([1 - alpha] * num_categories))
-    q_onestep_mats = q_onestep_mats.unsqueeze(0).repeat(num_timesteps + 2, 1, 1)
+    p_onestep_mats = torch.tensor([alpha / (num_categories - 1)] * num_categories**2, dtype=torch.float64)
+    p_onestep_mats = p_onestep_mats.view(num_categories, num_categories)
+    p_onestep_mats -= torch.diag(torch.diag(p_onestep_mats))
+    p_onestep_mats += torch.diag(torch.tensor([1 - alpha] * num_categories))
+    p_onestep_mats = torch.matrix_power(p_onestep_mats, n=num_skip_steps)
 
-    q_cum_mats = get_cum_matrices(q_onestep_mats)
+    p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
+    p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
+    p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return q_onestep_mats.transpose(1, 2), q_cum_mats
-
-def d3pm_prior(
-    num_categories: int, 
-    num_timesteps: int
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    
-    q_onestep_mats = []
-    for timestep in range(0, num_timesteps + 2):
-        beta = 1 / (num_timesteps - timestep + 2)
-        mat = torch.ones(num_categories, num_categories) * beta / num_categories
-        mat.diagonal().fill_(1 - (num_categories - 1) * beta / num_categories)
-        q_onestep_mats.append(mat)
-    q_onestep_mats = torch.stack(q_onestep_mats, dim=0)
-
-    q_cum_mats = get_cum_matrices(q_onestep_mats)
-
-    return q_onestep_mats.transpose(1, 2), q_cum_mats
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
 
 def random_neighbour_prior(
     alpha: float,
     num_categories: int, 
-    num_timesteps: int
+    num_timesteps: int,
+    num_skip_steps: int
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    q_onestep_mats = torch.diag(torch.tensor([1 - alpha] * num_categories))
-    q_onestep_mats += torch.diag(torch.tensor([alpha / 2] * (num_categories - 1)), diagonal=1)
-    q_onestep_mats += torch.diag(torch.tensor([alpha / 2] * (num_categories - 1)), diagonal=-1)
-    q_onestep_mats = q_onestep_mats.unsqueeze(0).repeat(num_timesteps + 2, 1, 1)
+    diag_values = 1 - alpha
+    off_diag_values = alpha / 2
+    p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float64)
 
-    q_cum_mats = get_cum_matrices(q_onestep_mats)
+    np.fill_diagonal(p_onestep_mats, diag_values)
+    p_onestep_mats += np.diag([off_diag_values] * (num_categories - 1), k=1)
+    p_onestep_mats += np.diag([off_diag_values] * (num_categories - 1), k=-1)
+    p_onestep_mats[0, 1] += off_diag_values
+    # p_onestep_mats[1, 0] += off_diag_values
+    p_onestep_mats[-1, -2] += off_diag_values
+    # p_onestep_mats[-2, -1] += off_diag_values
+    p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
 
-    return q_onestep_mats.transpose(1, 2), q_cum_mats
+    p_onestep_mats = torch.from_numpy(p_onestep_mats)
+    p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
+    p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
+    p_cum_mats = get_cum_matrices(p_onestep_mats)
+
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
+
+def von_mises_prior(
+    alpha: float,
+    num_categories: int, 
+    num_timesteps: int,
+    num_skip_steps: int
+):
+    angles = np.linspace(0, 2 * np.pi, num_categories, endpoint=False)
+    p_onestep_mats = np.zeros((num_categories, num_categories))
+
+    for i, current_angle in enumerate(angles):
+        for j, next_angle in enumerate(angles):
+            p_onestep_mats[i, j] = np.exp((1 / alpha) * np.cos(next_angle - current_angle))
+        p_onestep_mats[i] /= np.sum(p_onestep_mats[i])
+    p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
+
+    p_onestep_mats = torch.from_numpy(p_onestep_mats)
+    p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
+    p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
+    p_cum_mats = get_cum_matrices(p_onestep_mats)
+
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
+
+def gaussian_prior(
+    alpha: float,
+    num_categories: int, 
+    num_timesteps: int, 
+    num_skip_steps: int
+):
+    p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float64)
+    # indices = np.arange(num_categories)[None, ...]
+    # values = -(indices - indices.T)**2
+    # p_onestep_mats = values / alpha
+    norm_const = -4 * np.arange(
+        start=-(num_categories-1), 
+        stop=(num_categories+1), 
+        step=1, 
+        dtype=np.float64
+    ) ** 2
+    norm_const /= (alpha**2 * (num_categories - 1)**2)
+    for i in range(num_categories):
+        for j in range(num_categories):
+            if i == j:
+                continue
+            value = -(4 * (i - j)** 2) / (alpha**2 * (num_categories - 1)**2)
+            p_onestep_mats[i][j] = np.exp(value) / np.exp(norm_const).sum()
+
+    for i in range(num_categories):
+        p_onestep_mats[i][i] = 1 - p_onestep_mats[i].sum() 
+    p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
+
+    p_onestep_mats = torch.from_numpy(p_onestep_mats) # .softmax(dim=1)
+    p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
+    p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
+    p_cum_mats = get_cum_matrices(p_onestep_mats)
+
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
+
 
 # Cumulative returns with following pattern
-# 0         1           2           3           ...
-# 0->1      0->2        0->3        0->4        ...
+# 0         1           2           ...         N           N+1
+# 0->0      0->1        0->2        ...         0->N        0->N+1       
 
 # Onestep returns with following pattern
-# 0         1           2           3           ...
-# 0->1      1->2        2->3        3->4        ...
+# 0         1           2           ...         N           N+1
+# 0->0      0->1        1->2        ...         N-1->N      N->N+1     
 
 # Inherit from nn.Module to automatically do device casting
 class Prior(nn.Module):
     def __init__(
         self, 
-        alpha: Optional[float],
         num_categories: int,
         num_timesteps: int,
-        prior_type: Literal['random_jump', 'random_neighbour', 'd3pm'] = 'random_jump'
+        num_skip_steps: int,
+        prior_type: Literal[
+            'uniform', 
+            'random_neighbour', 
+            'gaussian',
+            'von_mises'
+        ] = 'uniform',
+        alpha: Optional[float] = None
     ) -> None:
         super().__init__()
         self.num_categories = num_categories
         self.num_timesteps = num_timesteps
+        self.num_skip_steps = num_skip_steps
         self.eps = 1e-6
 
-        if prior_type == 'd3pm':   
-            q_onestep, q_cum = d3pm_prior(num_categories, num_timesteps)
-        elif prior_type == 'random_jump' and alpha is not None:
-            q_onestep, q_cum = random_jump_prior(alpha, num_categories, num_timesteps)
+        if prior_type == 'gaussian' and alpha is not None:
+            p_onestep, p_cum = gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps)
+        elif prior_type == 'von_mises' and alpha is not None:
+            p_onestep, p_cum = von_mises_prior(alpha, num_categories, num_timesteps, num_skip_steps)
+        elif prior_type == 'uniform' and alpha is not None:
+            p_onestep, p_cum = uniform_prior(alpha, num_categories, num_timesteps, num_skip_steps)
         elif prior_type == 'random_neighbour' and alpha is not None:
-            q_onestep, q_cum = random_neighbour_prior(alpha, num_categories, num_timesteps)
+            p_onestep, p_cum = random_neighbour_prior(alpha, num_categories, num_timesteps, num_skip_steps)
         else:
             raise NotImplementedError(f'Got unknown prior: {prior_type} or alpha is None!')
-        self.register_buffer("q_onestep", q_onestep)
-        self.register_buffer("q_cum", q_cum)
+        self.register_buffer("p_onestep", p_onestep)
+        self.register_buffer("p_cum", p_cum)
         
-    def _qt(self, q_mat: torch.Tensor, t: torch.Tensor, x: torch.Tensor):
-        """Extracts transition matrix."""
-        t = broadcast(t, x.dim() - 1)
-        return q_mat[t, x]
+    def probs(
+        self, 
+        mat_type: Literal['onestep', 'cumulative'], 
+        t: torch.Tensor, 
+        *,
+        x_start: Optional[torch.Tensor] = None,
+        x_end: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Extracts probs from transition matrix."""
+        p_mat = self.p_onestep if mat_type == 'onestep' else self.p_cum
+        
+        if x_start is not None and x_end is not None:
+            t = broadcast(t, x_start.dim() - 1)
+            return p_mat[t, x_start, x_end].unsqueeze(-1)
+        if x_start is not None and x_end is None:
+            t = broadcast(t, x_start.dim() - 1)
+            return p_mat[t, x_start]
+        if x_start is None and x_end is not None:
+            t = broadcast(t, x_end.dim() - 1)
+            return p_mat[t, :, x_end]
+        raise ValueError('x_start and x_end cannot be None both!')
 
-    def sample(self, x_start: torch.Tensor, t: torch.Tensor):
-        """Samples from $p(x_{t} | x_{0})$."""
-        # noise = torch.rand((*x_start.shape, self.num_categories), device=x_start.device)
-        # noise = torch.clip(noise, self.eps, 1.0)
-        # gumbel_noise = -torch.log(-torch.log(noise))
-        # logits = torch.log() # do -1 to convert from time to index to match pattern from q_cum
-        # torch.argmax(logits + gumbel_noise, dim=-1)
-        batch_size, dim = x_start.shape[:2]
-        probs = self._qt(self.q_cum, t - 1, x_start)
-        probs = probs.reshape(batch_size * dim, -1)
-        return probs.multinomial(num_samples=1).reshape(x_start.shape)
+    def sample_bridge(self, x_start: torch.Tensor, x_end: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        r"""Samples from bridge $p(x_{t} | x_{0}, x_{1})$."""
+        p_start_t = self.probs('cumulative', t, x_start=x_start)
+        p_t_end = self.probs('cumulative', self.num_timesteps + 1 - t, x_end=x_end) # TODO: убедиться что это корректно
+        log_probs = torch.log(p_start_t + self.eps) + torch.log(p_t_end + self.eps) # - torch.log(p_start_end + self.eps)
+        
+        noise = torch.rand_like(log_probs)
+        noise = torch.clamp(noise, min=torch.finfo(noise.dtype).tiny, max=1.)
+        gumbel_noise = -torch.log(-torch.log(noise))
+        x_t = torch.argmax(log_probs + gumbel_noise, dim=-1)
+        # probs = log_probs.softmax(dim=-1).view(-1, self.num_categories)
+        # x_t = probs.multinomial(num_samples=1).view(x_start.shape)
+
+        is_final_step = broadcast(t, x_start.dim() - 1) == self.num_timesteps + 1
+        x_t = torch.where(is_final_step, x_end, x_t)
+        return x_t
     
-    def q_posterior_logits(self, x_start: torch.Tensor, x_t: torch.Tensor, t: torch.Tensor):
-        """Calculates logits of $p(x_{t-1} | x_{t}, x_{0})$.""" 
-
-        # if x_end is integer, we convert it to one-hot.
-        if not torch.is_floating_point(x_start) and not torch.is_complex(x_start):
+    def posterior_logits(
+        self, 
+        x_start: torch.Tensor, 
+        x_t: torch.Tensor, 
+        t: torch.Tensor, 
+        logits: bool = False
+    ) -> torch.Tensor:
+        r"""Calculates logits of $p(x_{t-1} | x_{t}, x_{0})$.""" 
+        if not logits:
             x_start_logits = torch.log(torch.nn.functional.one_hot(x_start, self.num_categories) + self.eps)
         else:
             x_start_logits = x_start.clone()
-        assert x_start_logits.shape == x_t.shape + (self.num_categories,), print( f"x_start_logits.shape: {x_start_logits.shape}, x_t.shape: {x_t.shape}")
+        assert x_start_logits.shape == x_t.shape + (self.num_categories,), f"x_start_logits.shape: {x_start_logits.shape}, x_t.shape: {x_t.shape}"
         
         # fact1 is "guess of x_{t}" from x_{t-1}
-        fact1 = self._qt(self.q_onestep, t - 1, x_t)
+        fact1 = self.probs('onestep', t, x_start=x_t)
 
         # fact2 is "guess of x_{t-1}" from x_{0}
-        x_start_probs = torch.softmax(x_start_logits, dim=-1)  # bs, ..., num_categories
-        # q_mat = self.q_cum[t - 2] # .to(dtype=x_start_probs.dtype) 
-        # fact2 = torch.einsum("b...c,bcd->b...d", x_start_probs, q_mat) # bs, num_categories, num_categories
-        fact2 = x_start_probs @ self.q_cum[t - 2].to(dtype=x_start_probs.dtype) 
-        q_posterior_logits = torch.log(fact1 + self.eps) + torch.log(fact2 + self.eps)
-
+        x_start_probs = x_start_logits.softmax(dim=-1)  # bs, ..., num_categories
+        fact2 = torch.einsum("b...c,bcd->b...d", x_start_probs, self.p_cum[t - 1].to(dtype=x_start_probs.dtype))
+        p_posterior_logits = torch.log(fact1 + self.eps) + torch.log(fact2 + self.eps)
+        
         # Use `torch.where` because when `t == 1` x_start_logits are actually x_0 already
-        return torch.where(broadcast(t, x_t.dim()) == 1, x_start_logits, q_posterior_logits)
+        is_first_step = broadcast(t, x_t.dim()) == 1
+        p_posterior_logits = torch.where(is_first_step, x_start_logits, p_posterior_logits)
+        return p_posterior_logits
+
