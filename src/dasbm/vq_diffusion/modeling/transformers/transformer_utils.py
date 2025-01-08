@@ -87,8 +87,8 @@ class CrossAttention(nn.Module):
 
         # causal mask to ensure that attention is only applied to the left in the input sequence
         if self.causal:
-            self.register_buffer("mask", torch.tril(torch.ones(seq_len, seq_len))
-                                        .view(1, 1, seq_len, seq_len))
+            self.register_buffer("mask", torch.tril(torch.ones(seq_len, seq_len)) # type: ignore
+                                        .view(1, 1, seq_len, seq_len)) # type: ignore
 
     def forward(self, x, encoder_output, mask=None):
         B, T, C = x.size()
@@ -329,14 +329,14 @@ class Text2ImageTransformer(nn.Module):
             content_spatial_size = (s, s)
 
         self.blocks = nn.Sequential(*[Block(
-                condition_seq_len,
+                condition_seq_len, # type: ignore
                 n_embd=n_embd,
                 n_head=n_head,
                 seq_len=content_seq_len,
                 attn_pdrop=attn_pdrop,
                 resid_pdrop=resid_pdrop,
                 mlp_hidden_times=mlp_hidden_times,
-                activate=block_activate,
+                activate=block_activate, # type: ignore
                 attn_type=all_attn_type[n],
                 content_spatial_size=content_spatial_size, # H , W
                 condition_dim = condition_dim,
@@ -346,7 +346,7 @@ class Text2ImageTransformer(nn.Module):
         ) for n in range(n_layer)])
 
         # final prediction head
-        out_cls = self.content_emb.num_embed-1
+        out_cls = self.content_emb.num_embed-1 # type: ignore
         self.to_logits = nn.Sequential(
             nn.LayerNorm(n_embd),
             nn.Linear(n_embd, out_cls),
@@ -428,14 +428,14 @@ class Text2ImageTransformer(nn.Module):
             input, 
             cond_emb,
             t):
-        cont_emb = self.content_emb(input)
+        cont_emb = self.content_emb(input) # type: ignore
         emb = cont_emb
 
         for block_idx in range(len(self.blocks)):   
             if self.use_checkpoint == False:
                 emb, att_weight = self.blocks[block_idx](emb, cond_emb, t.cuda()) # B x (Ld+Lt) x D, B x (Ld+Lt) x (Ld+Lt)
             else:
-                emb, att_weight = checkpoint(self.blocks[block_idx], emb, cond_emb, t.cuda())
+                emb, att_weight = checkpoint(self.blocks[block_idx], emb, cond_emb, t.cuda()) # type: ignore
         logits = self.to_logits(emb) # B x (Ld+Lt) x n
         out = rearrange(logits, 'b l c -> b c l')
         return out
@@ -482,7 +482,7 @@ class Condition2ImageTransformer(nn.Module):
                 attn_pdrop=attn_pdrop,
                 resid_pdrop=resid_pdrop,
                 mlp_hidden_times=mlp_hidden_times,
-                activate=block_activate,
+                activate=block_activate, # type: ignore
                 attn_type=all_attn_type[n],
                 content_spatial_size=content_spatial_size, # H , W
                 diffusion_step = diffusion_step,
@@ -491,7 +491,7 @@ class Condition2ImageTransformer(nn.Module):
         ) for n in range(n_layer)])
 
         # final prediction head
-        out_cls = self.content_emb.num_embed-1
+        out_cls = self.content_emb.num_embed-1 # type: ignore
         self.to_logits = nn.Sequential(
             nn.LayerNorm(n_embd),
             nn.Linear(n_embd, out_cls),
@@ -573,7 +573,7 @@ class Condition2ImageTransformer(nn.Module):
             input, 
             cond_emb,
             t):
-        cont_emb = self.content_emb(input)
+        cont_emb = self.content_emb(input) # type: ignore
         emb = cont_emb
 
         for block_idx in range(len(self.blocks)):   
@@ -622,7 +622,7 @@ class UnCondition2ImageTransformer(nn.Module):
                 attn_pdrop=attn_pdrop,
                 resid_pdrop=resid_pdrop,
                 mlp_hidden_times=mlp_hidden_times,
-                activate=block_activate,
+                activate=block_activate, # type: ignore
                 attn_type=all_attn_type[n],
                 content_spatial_size=content_spatial_size, # H , W
                 diffusion_step = diffusion_step,
@@ -631,7 +631,7 @@ class UnCondition2ImageTransformer(nn.Module):
         ) for n in range(n_layer)])
 
         # final prediction head
-        out_cls = self.content_emb.num_embed-1
+        out_cls = self.content_emb.num_embed-1 # type: ignore
         self.to_logits = nn.Sequential(
             nn.LayerNorm(n_embd),
             nn.Linear(n_embd, out_cls),
@@ -713,7 +713,7 @@ class UnCondition2ImageTransformer(nn.Module):
             input, 
             cond_emb,
             t):
-        cont_emb = self.content_emb(input)
+        cont_emb = self.content_emb(input) # type: ignore
         emb = cont_emb
 
         for block_idx in range(len(self.blocks)):   

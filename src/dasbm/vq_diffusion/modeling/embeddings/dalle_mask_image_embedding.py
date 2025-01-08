@@ -46,8 +46,8 @@ class DalleMaskImageEmbedding(BaseEmbedding):
         if emb.shape[1] > 0:
         # if False:
             if self.pos_emb_type == 'embedding':
-                height_emb = self.height_emb(torch.arange(self.spatial_size[0], device=index.device).view(1, self.spatial_size[0])).unsqueeze(2) # 1 x H x D -> 1 x H x 1 x D
-                width_emb = self.width_emb(torch.arange(self.spatial_size[1], device=index.device).view(1, self.spatial_size[1])).unsqueeze(1) # 1 x W x D -> 1 x 1 x W x D
+                height_emb = self.height_emb(torch.arange(self.spatial_size[0], device=index.device).view(1, self.spatial_size[0])).unsqueeze(2) # type: ignore # 1 x H x D -> 1 x H x 1 x D
+                width_emb = self.width_emb(torch.arange(self.spatial_size[1], device=index.device).view(1, self.spatial_size[1])).unsqueeze(1) # type: ignore # 1 x W x D -> 1 x 1 x W x D
             else:
                 height_emb = self.height_emb.unsqueeze(2) # 1 x H x D -> 1 x H x 1 x D
                 width_emb = self.width_emb.unsqueeze(1) # 1 x W x D -> 1 x 1 x W x D

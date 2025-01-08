@@ -1,9 +1,5 @@
-from numpy.core.fromnumeric import resize
-from numpy.lib.function_base import kaiser
-from numpy.lib.npyio import save
 import torch
 import random
-import math
 from dasbm.vq_diffusion.distributed.distributed import all_reduce, get_world_size
 
 def logits_top_k(logits, filter_ratio = 0.5, minimum=1, pad_value=None):
@@ -71,32 +67,6 @@ def sample_index_randomly(x, k, filter_ratio=0, largest=True):
         sampled.append(sampled_)
     sampled = torch.stack(sampled, dim=0).to(top_k_index)
     return sampled
-
-def get_token_type(mask, token_shape):
-    """
-    Get the token type according to the given mask and token_shape.
-    Note that we treat tokens into 3 types.
-    0: masked tokens
-    1: unmasked tokens
-    2: partially masked tokens   
-
-    Args:
-    mask: 4D tensor, B x 1 x H x W, the mask of the origin image. 1 denotes masked pixles 
-    and 0 denotes unmasked pixels.
-    token_shape: [H/r, W/r]. the shape of token
-    """
-    mask_float = mask.float()
-
-    mask_unshuffle = pixel_unshuffle(mask_float, token_shape) # B x r^2 x H/r x W/r
-
-    scale_factor = mask_unshuffle.shape[1]
-    mask_unshuffle = mask_unshuffle.sum(dim=1, keepdim=True) # B x 1 x H/r x W/r
-
-    token_type = torch.zeros_like(mask_unshuffle).long() + 2
-                                                                    
-    token_type[mask_unshuffle==0] = 0 # unmasked tokens
-    token_type[mask_unshuffle==scale_factor] = 1 # fully masked tokens
-    return token_type
 
 def gen_attention_mask(H, W, type='full', causal=True, condition_seq_len=0, **kwargs):
 
