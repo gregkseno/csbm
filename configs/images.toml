@@ -1,5 +1,5 @@
 [data]
-type = "images" # choices: "toy", "images", "graphs", "quantized_images"
+type = "images" # choices: "toy", "images", "quantized_images"
 dim = 32
 num_categories = 256
 num_timesteps = 100

@@ -79,6 +79,7 @@ if __name__ == '__main__':
         prior_type=args.prior.type
     )
     
+    vq_model = None
     if args.data.type == 'toy':
         forward_model = D3PM(
             input_dim=args.data.dim,
@@ -92,7 +93,7 @@ if __name__ == '__main__':
             num_timesteps=args.data.num_timesteps,
             **args.model.to_dict()
         )
-    elif args.data.type == 'images' or args.data.type == 'quantized_images':
+    elif args.data.type == 'images':
         forward_model = ImageD3PM(
             img_size=args.data.dim,
             num_categories=args.data.num_categories, 
@@ -105,20 +106,19 @@ if __name__ == '__main__':
             num_timesteps=args.data.num_timesteps,
             **args.model.to_dict()
         )
-    else:
-        raise NotImplementedError(f"Unknown exp type {args.data.type}!")
-
-    forward_optimizer = torch.optim.AdamW(forward_model.parameters(), lr=args.train.lr, betas=(0.95, 0.99)) # type: ignore
-    backward_optimizer = torch.optim.AdamW(backward_model.parameters(), lr=args.train.lr, betas=(0.95, 0.99)) # type: ignore
-
-    vq_model = None
-    if args.data.type == 'quantized_images':
+    elif args.data.type == 'quantized_images':
+        # TODO: VQ
         vq_model = VQModel(
             ddconfig=args.vq.ddconfig.to_dict(),
             n_embed=args.vq.n_embed,
             embed_dim=args.vq.embed_dim,
             ckpt_path=args.vq.checkpoint
         )
+    else:
+        raise NotImplementedError(f"Unknown exp type {args.data.type}!")
+
+    forward_optimizer = torch.optim.AdamW(forward_model.parameters(), lr=args.train.lr, betas=(0.95, 0.99)) # type: ignore
+    backward_optimizer = torch.optim.AdamW(backward_model.parameters(), lr=args.train.lr, betas=(0.95, 0.99)) # type: ignore
     
     forward_model.model, forward_optimizer = accelerator.prepare(
         forward_model.model, forward_optimizer

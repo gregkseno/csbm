@@ -1,4 +1,4 @@
-from typing import Any, Iterable, List, Literal, Optional, Tuple, Union
+from typing import Any, Literal, Optional, Tuple, Union
 
 import numpy as np
 import ot
@@ -8,22 +8,14 @@ import pandas as pd
 import os
 import torch
 from torch import nn
-from torch.utils.data import Dataset, TensorDataset
+from torch.utils.data import Dataset
 from torchvision import transforms
 
-from rdkit import Chem
-from rdkit.Chem.rdchem import BondType
-import random
-
 from torchvision import transforms, datasets
-from torch_geometric.utils import to_dense_adj, to_dense_batch, remove_self_loops, one_hot, from_smiles
-from torch_geometric.data import Batch, Data, InMemoryDataset
 
-import logging
 from tqdm.auto import tqdm
 tqdm.pandas()
 
-from dasbm.models.vq import VectorQuantizer2
 from dasbm.utils import broadcast
 
 #########################
@@ -231,186 +223,6 @@ class CouplingDataset(BaseDataset):
         p = p / p.sum()
         choices = np.random.choice(pi.shape[0] * pi.shape[1], p=p, size=batch_size)
         return np.divmod(choices, pi.shape[1])
-
-
-class Molecule:
-    nodes: torch.Tensor
-    edges: torch.Tensor
-    mask: torch.Tensor
-    # num_node_categories: int
-    # num_edge_categories: int
-
-    def __init__(
-        self,
-        nodes: torch.Tensor, 
-        edges: torch.Tensor, 
-        features: torch.Tensor, 
-        mask: torch.Tensor,
-        collapse: bool = False
-    ):
-        self.nodes = nodes
-        self.edges = edges
-        self.features = features
-        self.mask = mask
-        self._apply_mask(collapse)
-
-    def __str__(self):
-        return f'Molecule(nodes={self.nodes.shape}, edges={self.edges.shape}, features={self.features.shape}, mask={self.mask.shape})'
-    
-    def __repr__(self):
-        return f'Molecule(nodes={self.nodes.shape}, edges={self.edges.shape}, features={self.features.shape}, mask={self.mask.shape})'
-    
-    @staticmethod
-    def from_sparse(
-        x: torch.Tensor,
-        edge_index: torch.Tensor,
-        edge_attr: torch.Tensor,
-        y: torch.Tensor,
-        batch: torch.Tensor,
-    ) -> Union['Molecule', torch.Tensor]:
-        nodes, mask = to_dense_batch(x=x, batch=batch)
-        edge_index, edge_attr = remove_self_loops(
-            edge_index=edge_index, 
-            edge_attr=edge_attr
-        ) # type: ignore # return it!!!!
-        edges = to_dense_adj(
-            edge_index=edge_index, 
-            batch=batch, 
-            edge_attr=edge_attr, 
-            max_num_nodes=nodes.shape[1]
-        )
-        edges = Molecule.encode_no_edge(edges)
-        return Molecule(nodes=nodes, edges=edges, features=y, mask=mask)
-
-    
-    @staticmethod
-    def encode_no_edge(edges: torch.Tensor):
-        assert len(edges.shape) == 4
-        if edges.shape[-1] == 0:
-            return edges
-        no_edge = torch.sum(edges, dim=3) == 0
-        first_elt = edges[:, :, :, 0]
-        first_elt[no_edge] = 1
-        edges[:, :, :, 0] = first_elt
-        diag = torch.eye(edges.shape[1], dtype=torch.bool).unsqueeze(0).expand(edges.shape[0], -1, -1)
-        edges[diag] = 0
-        return edges
-    
-    def to(self, kwargs) -> 'Molecule':
-        self.nodes = self.nodes.to(**kwargs)
-        self.edges = self.edges.to(**kwargs)
-        self.features = self.features.to(**kwargs)
-        return self
-    
-    # @staticmethod
-    # def stack(batches: 'List[MoleculeBatch]', dim: int = 0):
-    #     nodes_trajectory, edges_trajectory, features_trajectory = [], [], []
-    #     for batch in batches:
-    #         nodes_trajectory.append(batch.nodes)
-    #         edges_trajectory.append(batch.edges)
-    #         features_trajectory.append(batch.features)
-
-    #     nodes_trajectory = torch.stack(nodes_trajectory, dim=dim)
-    #     edges_trajectory = torch.stack(edges_trajectory, dim=dim)
-    #     features_trajectory = torch.stack(features_trajectory, dim=dim)
-        
-    #     return MoleculeBatch(
-    #         nodes=nodes_trajectory, 
-    #         edges=edges_trajectory, 
-    #         features=features_trajectory,
-    #         mask=masks
-    #     )
-    
-    def _apply_mask(self, collapse: bool = False) -> 'Molecule':
-        nodes_mask = self.mask.unsqueeze(-1) # bs, n, 1
-        edges_mask1 = nodes_mask.unsqueeze(2) # bs, n, 1, 1
-        edges_mask2 = nodes_mask.unsqueeze(1) # bs, 1, n, 1
-
-        if collapse:
-            self.nodes = torch.argmax(self.nodes, dim=-1)
-            self.edges = torch.argmax(self.edges, dim=-1)
-
-            self.nodes[self.mask == 0] = -1
-            self.edges[(edges_mask1 * edges_mask2).squeeze(-1) == 0] = -1
-        else:
-            self.nodes = self.nodes * nodes_mask
-            self.edges = self.edges * edges_mask1 * edges_mask2
-            assert torch.allclose(self.edges, torch.transpose(self.edges, 1, 2))
-        return self
-    
-    @staticmethod
-    def apply_mask(
-        nodes: torch.Tensor, 
-        edges: torch.Tensor, 
-        features: torch.Tensor, 
-        mask: torch.Tensor,
-        collapse: bool = False
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Does not apply mask to `features`"""
-        batch = Molecule(nodes, edges, features, mask, collapse)
-        return batch.nodes, batch.edges, batch.features
-
-        
-class MoleculeDatasetSampler(TensorDataset):
-    def __init__(self, smiles: Iterable[str], mean: float = 2, std: float = 0.5):
-        super().__init__()
-        self.logger = logging.getLogger('DatasetSampler')
-        self.dataset = self.preprocess(smiles)
-        # TODO: mean, std filtration
-        # TODO: make data non one-hot
-        self.last_index = 0
-
-    def preprocess(self, smiles: Iterable[str]) -> List[Data]:
-        # TODO add filtration
-        atom_types = {atom: i for i, atom in enumerate(['C', 'N', 'S', 'O', 'F', 'Cl', 'Br', 'H'])}
-        bonds_types = {BondType.SINGLE: 0, BondType.DOUBLE: 1, BondType.TRIPLE: 2, BondType.AROMATIC: 3}
-
-        mols = []
-        for i, smile in enumerate(tqdm(smiles)):
-            mol = Chem.MolFromSmiles(smile)
-            N = mol.GetNumAtoms()
-
-            type_idx = []
-            for atom in mol.GetAtoms(): # type: ignore
-                type_idx.append(atom_types[atom.GetSymbol()])
-
-            row, col, edge_type = [], [], []
-            for bond in mol.GetBonds(): # type: ignore
-                start, end = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
-                row += [start, end]
-                col += [end, start]
-                edge_type += 2 * [bonds_types[bond.GetBondType()] + 1]
-
-            if len(row) == 0:
-                continue
-
-            edge_index = torch.tensor([row, col], dtype=torch.long)
-            edge_type = torch.tensor(edge_type, dtype=torch.long)
-            edge_attr = torch.nn.functional.one_hot(edge_type, num_classes=len(bonds_types) + 1).to(torch.float)
-
-            perm = (edge_index[0] * N + edge_index[1]).argsort()
-            edge_index = edge_index[:, perm]
-            edge_attr = edge_attr[perm]
-
-            x = torch.nn.functional.one_hot(torch.tensor(type_idx), num_classes=len(atom_types)).float()
-            y = torch.zeros(size=(1, 0), dtype=torch.float)
-
-            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, idx=i)
-            mols.append(data)
-
-        return mols
-
-    def sample(self, batch_size: int) -> Union[Molecule, torch.Tensor]:
-        assert batch_size <= len(self.dataset), f'Bach size: {batch_size} is larger than length of dataset: {len(self.dataset)}'
-        if self.last_index + batch_size >= len(self.dataset):
-            self.last_index = 0
-            random.shuffle(self.dataset)
-        batch = Batch.from_data_list(self.dataset[self.last_index:self.last_index + batch_size]) # type: ignore
-        batch = Molecule.from_sparse(
-            batch.x, batch.edge_index, batch.edge_attr, batch.y, batch.batch # type: ignore
-        )
-        self.last_index += batch_size
-        return batch
 
     
 #########################

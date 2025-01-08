@@ -1,5 +1,5 @@
 [data]
-type = "quantized_images" # choices: "toy", "images", "graphs", "quantized_images"
+type = "quantized_images" # choices: "toy", "images", "quantized_images"
 dim = 128
 latent_dim = 32
 num_categories = 256

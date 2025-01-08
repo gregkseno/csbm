@@ -6,12 +6,11 @@ from tqdm.auto import tqdm
 from accelerate import Accelerator
 import torch
 from torch.optim import Optimizer # type: ignore
-from torch.utils.data import TensorDataset, DataLoader, RandomSampler
+from torch.utils.data import DataLoader, RandomSampler
 from torch_ema import ExponentialMovingAverage as EMA
 
 from dasbm.models.toy import D3PM
 from dasbm.models.images import ImageD3PM
-from dasbm.models.graphs import DiGress
 from dasbm.models.vq import VQModel
 
 from dasbm.data import BaseDataset, CouplingDataset, Prior
@@ -19,7 +18,7 @@ from dasbm.utils import visualize, visualize_trajectory
 
 
 class DiscreteSBMTrainer:
-    exp_type: Literal['toy', 'images', 'quantized_images', 'graphs']
+    exp_type: Literal['toy', 'images', 'quantized_images']
     forward_and_backward = {'forward', 'backward'}
     def __init__(
         self,
@@ -27,13 +26,13 @@ class DiscreteSBMTrainer:
         inner_iterations: int,
         prior_iterations: int,
         accelerator: Accelerator,
-        forward_model: Union[D3PM, ImageD3PM, DiGress],
-        backward_model: Union[D3PM, ImageD3PM, DiGress],
+        forward_model: Union[D3PM, ImageD3PM],
+        backward_model: Union[D3PM, ImageD3PM],
         prior: Prior,
         forward_optimizer: Optimizer,
         backward_optimizer: Optimizer,
         vq_model: Optional[VQModel] = None,
-        exp_type: Literal['toy', 'images', 'quantized_images', 'graphs'] = 'toy', 
+        exp_type: Literal['toy', 'images', 'quantized_images'] = 'toy', 
         exp_path: Optional[str] = None,
         kl_loss_coeff: float = 1.,
         ce_loss_coeff: float = 0.001,
@@ -86,21 +85,6 @@ class DiscreteSBMTrainer:
                 - torch.log_softmax(pred_q_posterior_logits + self.eps, dim=-1)
             )
             kl_loss = kl_loss.sum(dim=-1).mean()
-        elif self.exp_type == 'graphs':
-            true_node_logits, true_edge_logits = true_q_posterior_logits.nodes, true_q_posterior_logits.edges
-            pred_node_logits, pred_edge_logits = pred_q_posterior_logits.nodes, pred_q_posterior_logits.edges
-            kl_node_loss = torch.softmax(true_node_logits + self.eps, dim=-1) * (
-                torch.log_softmax(true_node_logits + self.eps, dim=-1)
-                - torch.log_softmax(pred_node_logits + self.eps, dim=-1)
-            )
-            kl_node_loss = kl_node_loss.sum(dim=-1).mean()
-
-            kl_edge_loss = torch.softmax(true_edge_logits + self.eps, dim=-1) * (
-                torch.log_softmax(true_edge_logits + self.eps, dim=-1)
-                - torch.log_softmax(pred_edge_logits + self.eps, dim=-1)
-            )
-            kl_edge_loss = kl_edge_loss.sum(dim=-1).mean()
-            kl_loss = kl_node_loss + kl_edge_loss
         else:
             raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
         return kl_loss
@@ -115,19 +99,8 @@ class DiscreteSBMTrainer:
             pred_x_start_logits = pred_x_start_logits.flatten(start_dim=0, end_dim=-2)
             true_x_start = true_x_start.flatten(start_dim=0, end_dim=-1)
             ce_loss = torch.nn.CrossEntropyLoss()(pred_x_start_logits, true_x_start)
-        elif self.exp_type == 'graphs':
-            true_x_node_start, true_x_edge_start = true_x_start.nodes, true_x_start.edges
-            pred_x_node_start_logits, pred_x_edge_start_logits = pred_x_start_logits.nodes, pred_x_start_logits.edges
-            
-            pred_x_node_start_logits = pred_x_node_start_logits.flatten(start_dim=0, end_dim=-2)
-            true_x_node_start = true_x_node_start.flatten(start_dim=0, end_dim=-1)
-            ce_node_loss = torch.nn.CrossEntropyLoss()(pred_x_node_start_logits, true_x_node_start)
-
-            pred_x_edge_start_logits = pred_x_edge_start_logits.flatten(start_dim=0, end_dim=-2)
-            true_x_edge_start = true_x_edge_start.flatten(start_dim=0, end_dim=-1)
-            ce_edge_loss = torch.nn.CrossEntropyLoss()(pred_x_edge_start_logits, true_x_edge_start)
-            
-            ce_loss = ce_node_loss + ce_edge_loss
+        else:
+            raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
         return ce_loss
 
     def markovian_projection(

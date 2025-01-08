@@ -128,7 +128,7 @@ def broadcast(t: torch.Tensor, num_add_dims: int) -> torch.Tensor:
     return t.reshape(shape)
 
 def visualize(
-    exp_type: Literal['toy', 'images', 'quantized_images', 'graphs'],
+    exp_type: Literal['toy', 'images', 'quantized_images'],
     x_end: Any, 
     x_start: Any, 
     pred_x_start: Any, 
@@ -143,8 +143,6 @@ def visualize(
         vis_func = visualize_toy
     elif exp_type == 'images' or exp_type == 'quantized_images':
         vis_func = visualize_images
-    elif exp_type == 'graphs':
-        pass
     else:
         raise NotImplementedError(f"Unknown exp type {exp_type}!")
     vis_func(
@@ -252,7 +250,7 @@ def visualize_images(
 
 
 def visualize_trajectory(
-    exp_type: Literal['toy', 'images', 'quantized_images', 'graphs'],
+    exp_type: Literal['toy', 'images', 'quantized_images'],
     pred_x_start: torch.Tensor | np.ndarray, 
     trajectories: torch.Tensor | np.ndarray, 
     fb: Literal['forward', 'backward'],
@@ -266,8 +264,6 @@ def visualize_trajectory(
         vis_func = visualize_trajectory_toy
     elif exp_type == 'images' or exp_type == 'quantized_images':
         vis_func = visualize_trajectory_image
-    elif exp_type == 'graphs':
-        pass
     else:
         raise NotImplementedError(f"Unknown exp type {exp_type}!")
     vis_func(
