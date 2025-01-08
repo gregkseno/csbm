@@ -79,7 +79,6 @@ if __name__ == '__main__':
         prior_type=args.prior.type
     )
     
-    vq_model = None
     if args.data.type == 'toy':
         forward_model = D3PM(
             input_dim=args.data.dim,
@@ -127,20 +126,18 @@ if __name__ == '__main__':
         backward_model.model, backward_optimizer
     )
     prior = prior.to(accelerator.device)
-    if vq_model is not None:
-        vq_model = vq_model.to(accelerator.device)
     
     trainer = DiscreteSBMTrainer(
         iterations=args.train.iterations,
         inner_iterations=args.train.inner_iterations,
         prior_iterations=args.train.prior_iterations,
+        use_mini_batch=args.tran.use_mini_batch,
         accelerator=accelerator,
         forward_model=forward_model,
         backward_model=backward_model,
         prior=prior,
         forward_optimizer=forward_optimizer,
         backward_optimizer=backward_optimizer,
-        vq_model=vq_model,
         kl_loss_coeff=args.train.kl_loss_coeff,
         ce_loss_coeff=args.train.ce_loss_coeff,
         ema_decay=args.train.ema_decay,

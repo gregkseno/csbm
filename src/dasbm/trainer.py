@@ -4,6 +4,8 @@ from typing import Any, Literal, Optional, Union
 from tqdm.auto import tqdm
 
 from accelerate import Accelerator
+import numpy as np
+import ot
 import torch
 from torch.optim import Optimizer # type: ignore
 from torch.utils.data import DataLoader, RandomSampler
@@ -25,13 +27,13 @@ class DiscreteSBMTrainer:
         iterations: int,
         inner_iterations: int,
         prior_iterations: int,
+        use_mini_batch: bool,
         accelerator: Accelerator,
         forward_model: Union[D3PM, ImageD3PM],
         backward_model: Union[D3PM, ImageD3PM],
         prior: Prior,
         forward_optimizer: Optimizer,
         backward_optimizer: Optimizer,
-        vq_model: Optional[VQModel] = None,
         exp_type: Literal['toy', 'images', 'quantized_images'] = 'toy', 
         exp_path: Optional[str] = None,
         kl_loss_coeff: float = 1.,
@@ -46,6 +48,7 @@ class DiscreteSBMTrainer:
         self.iterations = iterations
         self.inner_iterations = inner_iterations
         self.prior_iterations = prior_iterations
+        self.use_mini_batch = use_mini_batch
 
         self.accelerator = accelerator
         self.models = {
@@ -61,7 +64,6 @@ class DiscreteSBMTrainer:
             'forward': forward_optimizer,
             'backward': backward_optimizer
         }
-        self.vq_model = vq_model 
 
         self.kl_loss_coeff = kl_loss_coeff
         self.ce_loss_coeff = ce_loss_coeff
@@ -128,9 +130,10 @@ class DiscreteSBMTrainer:
             else:
                 true_x_start, true_x_end = batch, self.models[bf].sample(batch, self.prior)
 
-            if self.vq_model is not None:
-                true_x_start = self.vq_model.encode_code(true_x_start)
-                true_x_end = self.vq_model.encode_code(true_x_end)
+            if self.use_mini_batch:
+                pi = self._get_map(true_x_start.float(), true_x_end.float())
+                i, j = self._sample_map(pi, true_x_start.shape[0])
+                true_x_start, true_x_end = true_x_start[i].reshape, true_x_end[j]
 
             t = torch.randint(
                 low=1, 
@@ -179,25 +182,20 @@ class DiscreteSBMTrainer:
         with self.emas[fb].average_parameters():
             test_x_start, test_x_end = next(iter(dataloader))
 
-            if self.vq_model is not None:
-                pred_x_start = self.models[fb].sample(self.vq_model.encode_code(test_x_end), self.prior) 
-                pred_x_start = self.vq_model.decode_code(pred_x_start)
-            else:
-                pred_x_start = self.models[fb].sample(test_x_end, self.prior)
+            pred_x_start = self.models[fb].sample(test_x_end, self.prior)
+            if self.exp_type == 'quantized_images':
+                pred_x_start = self.models[fb].decode_code(pred_x_start)
 
-            traj_start = test_x_end[:self.num_trajectories]
-            if self.vq_model is not None:
-                traj_start = self.vq_model.encode_code(traj_start)                
-
+            traj_start = test_x_end[:self.num_trajectories]           
             repeats = [self.num_translations] + [1] * traj_start.dim()
             trajectories = traj_start.unsqueeze(0).repeat(*repeats)
             trajectories = trajectories.reshape(-1, *traj_start.shape[1:])
             trajectories = trajectories.to(self.accelerator.device)
             trajectories = self.models[fb].sample_trajectory(trajectories, self.prior)
 
-            if self.vq_model is not None:
-                trajectories = self.vq_model.decode_code(trajectories.reshape(-1, *traj_start.shape[1:]))
-                trajectories = trajectories.reshape(-1, *traj_start.shape)
+            if self.exp_type == 'quantized_images':
+                trajectories = self.models[fb].decode_code(trajectories.reshape(-1, *traj_start.shape[1:]))
+                trajectories = trajectories.reshape(-1, self.num_trajectories, *pred_x_start.shape[1:])
 
             visualize(
                 exp_type=self.exp_type, 
@@ -227,7 +225,7 @@ class DiscreteSBMTrainer:
         self, 
         train_size: int, 
         eval_size: int,
-        coupling_type: Literal['independent', 'prior', 'mini_batch'],
+        coupling_type: Literal['independent', 'prior'],
         trainset_x: BaseDataset, 
         trainset_y: BaseDataset,
         testset_x: BaseDataset, 
@@ -280,3 +278,20 @@ class DiscreteSBMTrainer:
             self.markovian_projection('backward', trainloader=backward_trainloader, testloader=backward_testloader)
 
         self.accelerator.print('End training!')
+
+    def _get_map(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        a, b = ot.unif(x.shape[0]), ot.unif(y.shape[0])
+        if x.dim() > 2:
+            x = x.reshape(x.shape[0], -1)
+        if y.dim() > 2:
+            y = y.reshape(y.shape[0], -1)
+        y = y.reshape(y.shape[0], -1)
+        M = torch.cdist(x, y) ** 2
+        p = ot.emd(a, b, M.detach().cpu().numpy())
+        return p # type: ignore
+    
+    def _sample_map(self, pi: torch.Tensor, batch_size: int):
+        p = pi.flatten()
+        p = p / p.sum()
+        choices = np.random.choice(pi.shape[0] * pi.shape[1], p=p, size=batch_size)
+        return np.divmod(choices, pi.shape[1])

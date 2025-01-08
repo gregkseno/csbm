@@ -177,7 +177,7 @@ class CouplingDataset(BaseDataset):
         self, 
         dataset: BaseDataset, 
         conditional: BaseDataset, 
-        type: Literal['independent', 'prior', 'mini_batch'] = 'independent',
+        type: Literal['independent', 'prior'] = 'independent',
         prior: Optional['Prior'] = None
     ):
         self.type = type
@@ -197,32 +197,11 @@ class CouplingDataset(BaseDataset):
         self.conditional = conditional
 
     def __getitem__(self, idx):
-        x, y = self.dataset[idx], self.conditional[idx]
-        if self.type == 'mini_batch':
-            # TODO: Fix bug because x and y is not a mini-batch
-            pi = self._get_map(x.float(), y.float())
-            i, j = self._sample_map(pi, x.shape[0])
-            x, y = x[i], y[j]
+        if self.type == 'independent':
+            x, y = self.dataset[idx], self.conditional[idx]
         elif self.type == 'prior':
-            raise NotImplementedError('Only prior and independent couplings are now supported!')
+            raise NotImplementedError('Only independent coupling is now supported!')
         return x, y
-    
-    def _get_map(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        a, b = ot.unif(x.shape[0]), ot.unif(y.shape[0])
-        if x.dim() > 2:
-            x = x.reshape(x.shape[0], -1)
-        if y.dim() > 2:
-            y = y.reshape(y.shape[0], -1)
-        y = y.reshape(y.shape[0], -1)
-        M = torch.cdist(x, y) ** 2
-        p = ot.emd(a, b, M.detach().cpu().numpy())
-        return p # type: ignore
-    
-    def _sample_map(self, pi: torch.Tensor, batch_size: int):
-        p = pi.flatten()
-        p = p / p.sum()
-        choices = np.random.choice(pi.shape[0] * pi.shape[1], p=p, size=batch_size)
-        return np.divmod(choices, pi.shape[1])
 
     
 #########################
