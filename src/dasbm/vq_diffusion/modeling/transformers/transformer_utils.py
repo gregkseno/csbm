@@ -9,15 +9,11 @@ import math
 import torch
 from torch import nn
 import torch.nn.functional as F
-
-from dasbm.vq_diffusion.utils.misc import instantiate_from_config
-import numpy as np
 from einops import rearrange
-from dasbm.vq_diffusion.distributed.distributed import is_primary, get_rank
-
-from inspect import isfunction
-from torch.cuda.amp import autocast
 from torch.utils.checkpoint import checkpoint
+
+from dasbm.vq_diffusion.modeling.embeddings.dalle_mask_image_embedding import DalleMaskImageEmbedding
+from dasbm.vq_diffusion.utils.misc import instantiate_from_config
 
 class FullAttention(nn.Module):
     def __init__(self,
@@ -591,8 +587,8 @@ class UnCondition2ImageTransformer(nn.Module):
         n_embd=512,
         n_head=16,
         content_seq_len=256,
-        attn_pdrop=0,
-        resid_pdrop=0,
+        attn_pdrop=.0,
+        resid_pdrop=.0,
         mlp_hidden_times=4,
         block_activate=None,
         attn_type='self',
@@ -604,7 +600,7 @@ class UnCondition2ImageTransformer(nn.Module):
     ):
         super().__init__()
 
-        self.content_emb = instantiate_from_config(content_emb_config)
+        self.content_emb = DalleMaskImageEmbedding(**content_emb_config) # type: ignore
 
         # transformer
         assert attn_type == 'self'
@@ -708,16 +704,11 @@ class UnCondition2ImageTransformer(nn.Module):
             ]
             return optim_groups
 
-    def forward(
-            self, 
-            input, 
-            cond_emb,
-            t):
-        cont_emb = self.content_emb(input) # type: ignore
-        emb = cont_emb
+    def forward(self, input, t):
+        emb = self.content_emb(input) # type: ignore
 
         for block_idx in range(len(self.blocks)):   
-            emb, att_weight = self.blocks[block_idx](emb, cond_emb, t.cuda()) # B x (Ld+Lt) x D, B x (Ld+Lt) x (Ld+Lt)
+            emb, _ = self.blocks[block_idx](emb, None, t) # B x (Ld+Lt) x D, B x (Ld+Lt) x (Ld+Lt)
         logits = self.to_logits(emb) # B x (Ld+Lt) x n
-        out = rearrange(logits, 'b l c -> b c l')
-        return out
+        # out = rearrange(logits, 'b l c -> b c l')
+        return logits

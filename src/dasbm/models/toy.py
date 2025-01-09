@@ -64,8 +64,8 @@ class D3PM(nn.Module):
         r"""Samples from $p(x_{t-1} | x_{t}, \hat{x_{0}})$, where $\hat{x_{0}} \sim m_{\theta}(\hat{x_{0}} | x_{t})$."""
         first_step = (t == 1).long().view((x.shape[0], *[1] * (x.dim() - 1)))
         
-        pred_x_end_logits = self(x, t)
-        pred_q_posterior_logits = prior.posterior_logits(pred_x_end_logits, x, t, logits=True)
+        pred_x_start_logits = self(x, t)
+        pred_q_posterior_logits = prior.posterior_logits(pred_x_start_logits, x, t, logits=True)
         noise = torch.rand_like(pred_q_posterior_logits)
         noise = torch.clamp(noise, min=torch.finfo(noise.dtype).tiny, max=1.)
         gumbel_noise = -torch.log(-torch.log(noise))

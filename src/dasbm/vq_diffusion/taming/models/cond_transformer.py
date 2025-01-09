@@ -36,7 +36,7 @@ class Net2NetTransformer(pl.LightningModule):
         self.init_first_stage_from_ckpt(first_stage_config)
         self.init_cond_stage_from_ckpt(cond_stage_config)
         if permuter_config is None:
-            permuter_config = {"target": "image_synthesis.taming.modules.transformer.permuter.Identity"}
+            permuter_config = {"target": "dasbm.vq_diffusion.taming.modules.transformer.permuter.Identity"}
         self.permuter = instantiate_from_config(config=permuter_config)
         self.transformer = instantiate_from_config(config=transformer_config)
 

@@ -1,40 +1,64 @@
-from typing import Tuple
-
+from typing import Any
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from dasbm.data import Prior
-from dasbm.vq_diffusion.modeling.codecs.image_codec.taming_gumbel_vqvae import TamingFFHQVQVAE
-from dasbm.vq_diffusion.modeling.transformers.transformer_utils import UnCondition2ImageTransformer
+from dasbm.vq_diffusion.modeling.codecs.image_codec.taming_gumbel_vqvae import TamingFFHQVQVAE as VectorQuantizer
+from dasbm.vq_diffusion.modeling.transformers.transformer_utils import UnCondition2ImageTransformer as Transformer
 
-class VQDiffusion(nn.Module):
+class LatentD3PM(nn.Module):
     def __init__(
         self, 
-        content_codec_config,
-        diffusion_config,
-        num_categories: int = 256,
-        num_timesteps: int = 100, 
+        latent_size=16,
+        num_categories: int = 1024,
+        num_timesteps: int = 100,
+        num_channels: int = 4,
+        num_layers: int = 24,
+        hidden_dim: int = 512,
+        num_att_heads: int = 16,
+        dropout: float = .0,
     ) -> None:
         super().__init__()
-        self.vq_model = TamingFFHQVQVAE(**content_codec_config)
-        self.model = UnCondition2ImageTransformer(**diffusion_config)
+        content_emb_config = {
+            'num_embed': num_categories, # total number of embeddings (vocabulary size) i.e. num_categories
+            'spatial_size': int(num_categories ** 0.5), # for positional encoding it is image like (squared)
+            'embed_dim': hidden_dim, # size of one embedding
+            'trainable': True,
+            'pos_emb_type': 'embedding',
+        }
+
+        self.model = Transformer(
+            n_layer=num_layers,
+            n_embd=hidden_dim, # embed beacuse of time encoding
+            n_head=num_att_heads,
+            content_seq_len=latent_size*latent_size,
+            attn_pdrop=dropout,
+            resid_pdrop=dropout,
+            mlp_hidden_times=num_channels,
+            block_activate='GELU2',
+            attn_type='self',
+            content_spatial_size=[latent_size, latent_size],
+            diffusion_step=num_timesteps,
+            timestep_type='adalayernorm',
+            content_emb_config=content_emb_config,
+            mlp_type='conv_mlp',
+        )
 
         self.num_categories = num_categories
         self.num_timesteps = num_timesteps
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        x_one_hot = F.one_hot(x, self.num_categories) 
-        mean = (self.num_categories - 1) / 2
-        x = x / mean - 1
-        return self.model(x, t) + x_one_hot
+        # x_one_hot = F.one_hot(x, self.num_categories) 
+        # mean = (self.num_categories - 1) / 2
+        # x = x / mean - 1
+        return self.model(x, t)  # + x_one_hot
 
     def markov_sample(self, x: torch.Tensor, t: torch.Tensor, prior: Prior):
         r"""Samples from $p(x_{t-1} | x_{t}, \hat{x_{0}})$, where $\hat{x_{0}} \sim m_{\theta}(\hat{x_{0}} | x_{t})$."""
         first_step = (t == 1).long().view((x.shape[0], *[1] * (x.dim() - 1)))
         
-        pred_x_end_logits = self(x, t)
-        pred_q_posterior_logits = prior.posterior_logits(pred_x_end_logits, x, t, logits=True)
+        pred_x_start_logits = self(x, t)
+        pred_q_posterior_logits = prior.posterior_logits(pred_x_start_logits, x, t, logits=True)
         noise = torch.rand_like(pred_q_posterior_logits)
         noise = torch.clamp(noise, min=torch.finfo(noise.dtype).tiny, max=1.)
         gumbel_noise = -torch.log(-torch.log(noise))

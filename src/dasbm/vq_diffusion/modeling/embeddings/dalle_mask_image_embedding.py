@@ -36,12 +36,8 @@ class DalleMaskImageEmbedding(BaseEmbedding):
 
     def forward(self, index, **kwargs):
         assert index.dim() == 2 # B x L
-        try:
-            index[index < 0] = 0  
-            emb = self.emb(index)
-        except:
-            raise RuntimeError('IndexError: index out of range in self, max index {}, num embed {}'.format(index.max(), self.num_embed))
-        
+        index[index < 0] = 0  
+        emb = self.emb(index)
         # add col and row embedding
         if emb.shape[1] > 0:
         # if False:
