@@ -1,0 +1,25 @@
+data:
+  type: toy # choices: "toy", "images", "quantized_images"
+  dim: 2
+  num_categories: 50
+  num_timesteps: 4
+  num_skip_steps: 25
+  coupling_type: independent # choices: "independent", "prior"
+prior:
+  alpha: 0.01
+  type: gaussian # choices: "uniform", "gaussian", "random_neighbour", "von_mises"
+train:
+  batch_size: 512
+  iterations: 10
+  prior_iterations: 10
+  inner_iterations: 20000
+  use_mini_batch: false
+  lr: 0.0004
+  ce_loss_coeff: 0.001
+  kl_loss_coeff: 1
+  ema_decay: 0.999
+eval:
+  freq: 1000
+  num_samples: 1024
+  num_trajectories: 2 # How many trajecotries
+  num_translations: 2 # How many times sample trajecotry from single point

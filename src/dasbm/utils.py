@@ -1,9 +1,9 @@
-from argparse import Namespace
-import importlib
 import os
+from omegaconf.dictconfig import DictConfig
+from omegaconf.listconfig import ListConfig
+
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
-import json
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
@@ -16,59 +16,7 @@ import torch
 from torchvision.utils import make_grid
 
 
-class DotDict(Namespace):
-    """A simple class that builds upon `argparse.Namespace`
-    in order to make chained attributes possible.
-    https://github.com/nicholasmireles/DotDict/tree/main
-    """
-
-    def __init__(self, temp=False, key=None, parent=None) -> None:
-        self._temp = temp
-        self._key = key
-        self._parent = parent
-
-    def __eq__(self, other):
-        if not isinstance(other, DotDict):
-            return NotImplemented
-        return vars(self) == vars(other)
-
-    def __getattr__(self, __name: str) -> Any:
-        if __name not in self.__dict__ and not self._temp:
-            self.__dict__[__name] = DotDict(temp=True, key=__name, parent=self)
-        else:
-            del self._parent.__dict__[self._key] # type: ignore
-            raise AttributeError("No attribute '%s'" % __name)
-        return self.__dict__[__name]
-
-    def __repr__(self) -> str:
-        return json.dumps(self.to_dict(), indent=4)
-
-    @classmethod
-    def from_dict(cls, original: Mapping[str, Any]) -> "DotDict":
-        """Create a DotDict from a (possibly nested) dict `original`.
-        Warning: this method should not be used on very deeply nested inputs,
-        since it's recursively traversing the nested dictionary values.
-        """
-        dd = DotDict()
-        for key, value in original.items():
-            if isinstance(value, Mapping):
-                value = cls.from_dict(value)
-            setattr(dd, key, value)
-        return dd
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert a DotDict back to a standard dictionary."""
-        result = {}
-        for key, value in self.__dict__.items():
-            if key.startswith("_"):
-                continue
-            if isinstance(value, DotDict):
-                result[key] = value.to_dict()
-            else:
-                result[key] = value
-        return result
-
-def create_expertiment(exp_dir: str, hyperparams: DotDict) -> Tuple[str, str]:
+def create_expertiment(exp_dir: str, hyperparams: DictConfig | ListConfig) -> Tuple[str, str]:
     """Creates directory for experiment.
     Returns experiment name and path."""
     dim_alpha = f'dim_{hyperparams.data.dim}_aplha_{hyperparams.prior.alpha}'

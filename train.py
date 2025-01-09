@@ -1,6 +1,6 @@
 import argparse
 import sys
-import tomllib as toml
+from omegaconf import OmegaConf
 
 from accelerate import Accelerator
 from accelerate.utils import set_seed
@@ -20,7 +20,7 @@ from dasbm.models.toy import D3PM
 from dasbm.models.images import ImageD3PM
 from dasbm.models.vq import VQModel
 from dasbm.trainer import DiscreteSBMTrainer
-from dasbm.utils import create_expertiment, DotDict
+from dasbm.utils import create_expertiment
 
 
 if __name__ == '__main__':
@@ -35,8 +35,7 @@ if __name__ == '__main__':
     exp_dir = args.exp_dir
     data_dir = args.data_dir
 
-    with open(args.config, 'rb') as file:
-        args = DotDict.from_dict(toml.load(file))
+    args = OmegaConf.load(args.config)
     
     exp_name, exp_path = None, None
     if accelerator.is_main_process:
@@ -45,10 +44,10 @@ if __name__ == '__main__':
     accelerator.init_trackers(
         project_name='Discrete SBM', 
         init_kwargs={'wandb': {'name': exp_name}}, 
-        config=args.to_dict()
+        config=OmegaConf.to_container(args, resolve=True) # type: ignore
     )
     accelerator.print(f'Created experiment folder in {exp_path}.')
-    accelerator.print(f'Initializing experiment with:\n{repr(args)}')
+    accelerator.print(f'Initializing experiment with:\n{OmegaConf.to_yaml(args)}')
 
     accelerator.print('Loading dataset...')
     with accelerator.main_process_first(): # Avoid creating dirs at the same time

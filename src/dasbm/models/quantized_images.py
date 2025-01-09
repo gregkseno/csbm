@@ -1,10 +1,29 @@
-from typing import Any
+from typing import Any, Optional
 import torch
 import torch.nn as nn
 
 from dasbm.data import Prior
-from dasbm.vq_diffusion.modeling.codecs.image_codec.taming_gumbel_vqvae import TamingFFHQVQVAE as VectorQuantizer
+from dasbm.vq_diffusion.modeling.codecs.image_codec.taming_gumbel_vqvae import TamingFFHQVQVAE, Encoder, Decoder
 from dasbm.vq_diffusion.modeling.transformers.transformer_utils import UnCondition2ImageTransformer as Transformer
+
+
+class VectorQuantizer(TamingFFHQVQVAE):
+    def __init__(
+        self,
+        latent_size=16,
+        num_categories: int = 1024,
+        config_path: Optional[str] = None,
+        ckpt_path: Optional[str] = None
+    ) -> None:
+        self.token_shape = latent_size
+        self.num_tokens = num_categories
+        self.quantize_number = 0
+        self.trainable = False
+        
+        model = self.load_model(config_path, ckpt_path)
+        self.enc = Encoder(model.encoder, model.quant_conv, model.quantize)
+        self.dec = Decoder(model.decoder, model.post_quant_conv, model.quantize, latent_size, latent_size)
+        self._set_trainable()
 
 class LatentD3PM(nn.Module):
     def __init__(
@@ -12,9 +31,9 @@ class LatentD3PM(nn.Module):
         latent_size=16,
         num_categories: int = 1024,
         num_timesteps: int = 100,
+        hidden_dim: int = 512,
         num_channels: int = 4,
         num_layers: int = 24,
-        hidden_dim: int = 512,
         num_att_heads: int = 16,
         dropout: float = .0,
     ) -> None:

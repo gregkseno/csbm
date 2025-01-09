@@ -4,12 +4,8 @@ from omegaconf import OmegaConf
 import sys
 sys.path.append("..")
 # sys.path.append("../image_synthesis")
-from dasbm.vq_diffusion.utils.misc import instantiate_from_config
 from dasbm.vq_diffusion.taming.models.vqgan import GumbelVQ, VQModel
 from dasbm.vq_diffusion.taming.models.cond_transformer import Net2NetTransformer
-import os
-import torchvision.transforms.functional as TF
-import PIL
 from dasbm.vq_diffusion.modeling.codecs.base_codec import BaseCodec
 from einops import rearrange
 import math
@@ -60,7 +56,7 @@ class TamingFFHQVQVAE(BaseCodec):
         ):
         super().__init__()
         
-        model = self.LoadModel(config_path, ckpt_path)
+        model = self.load_model(config_path, ckpt_path)
 
         self.enc = Encoder(model.encoder, model.quant_conv, model.quantize)
         self.dec = Decoder(model.decoder, model.post_quant_conv, model.quantize, token_shape[0], token_shape[1])
@@ -79,7 +75,7 @@ class TamingFFHQVQVAE(BaseCodec):
         self.token_shape = token_shape
         self._set_trainable()
 
-    def LoadModel(self, config_path, ckpt_path):
+    def load_model(self, config_path, ckpt_path):
         config = OmegaConf.load(config_path)
         # model = instantiate_from_config(config.model)
         model = Net2NetTransformer(**config.model.params)
