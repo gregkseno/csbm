@@ -3,27 +3,27 @@ import torch
 import torch.nn as nn
 
 from dasbm.data import Prior
-from dasbm.vq_diffusion.modeling.codecs.image_codec.taming_gumbel_vqvae import TamingFFHQVQVAE, Encoder, Decoder
-from dasbm.vq_diffusion.modeling.transformers.transformer_utils import UnCondition2ImageTransformer as Transformer
+from dasbm.vq_diffusion.modeling.codecs.image_codec.taming_gumbel_vqvae import TamingFFHQVQVAE
+from dasbm.vq_diffusion.modeling.transformers.transformer_utils import UnCondition2ImageTransformer
 
 
 class VectorQuantizer(TamingFFHQVQVAE):
     def __init__(
         self,
+        config_path: str,
+        ckpt_path: str,
         latent_size=16,
         num_categories: int = 1024,
-        config_path: Optional[str] = None,
-        ckpt_path: Optional[str] = None
     ) -> None:
-        self.token_shape = latent_size
-        self.num_tokens = num_categories
-        self.quantize_number = 0
-        self.trainable = False
-        
-        model = self.load_model(config_path, ckpt_path)
-        self.enc = Encoder(model.encoder, model.quant_conv, model.quantize)
-        self.dec = Decoder(model.decoder, model.post_quant_conv, model.quantize, latent_size, latent_size)
-        self._set_trainable()
+        super().__init__(
+            trainable=False,
+            token_shape=[latent_size, latent_size],
+            config_path=config_path,
+            ckpt_path=ckpt_path,
+            num_tokens=num_categories,
+            quantize_number=0,
+            mapping_path=None
+        )
 
 class LatentD3PM(nn.Module):
     def __init__(
@@ -46,7 +46,7 @@ class LatentD3PM(nn.Module):
             'pos_emb_type': 'embedding',
         }
 
-        self.model = Transformer(
+        self.model = UnCondition2ImageTransformer(
             n_layer=num_layers,
             n_embd=hidden_dim, # embed beacuse of time encoding
             n_head=num_att_heads,
