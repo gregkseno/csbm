@@ -20,25 +20,17 @@ def create_expertiment(exp_dir: str, hyperparams: DictConfig | ListConfig) -> Tu
     """Creates directory for experiment.
     Returns experiment name and path."""
     dim_alpha = f'dim_{hyperparams.data.dim}_aplha_{hyperparams.prior.alpha}'
-    if hyperparams.ce_loss_coeff == 0:
+    if hyperparams.ce_loss_coeff == 0.:
         dim_alpha += '_no_ce'
-    if hyperparams.kl_loss_coeff == 0:
+    if hyperparams.kl_loss_coeff == 0.:
         dim_alpha += '_no_kl'
-
-    save_dir_name = os.path.join(exp_dir, hyperparams.data.type)
-    if not os.path.exists(save_dir_name):
-        os.mkdir(save_dir_name)
-
     prior = f'{hyperparams.prior.type}'
-    save_dir_name = os.path.join(save_dir_name, prior)
-    if not os.path.exists(save_dir_name):
-        os.mkdir(save_dir_name)
-
     time = datetime.now().strftime("%d.%m.%y_%H:%M:%S")
-    save_dir_name = os.path.join(save_dir_name, dim_alpha + '_' + time)
-    if not os.path.exists(save_dir_name):
-        os.mkdir(save_dir_name)
-
+    
+    save_dir_name = os.path.join(
+        exp_dir, hyperparams.data.type, prior, dim_alpha + '_' + time
+    )
+    os.makedirs(os.path.join(save_dir_name, 'checkpoints'), exist_ok=True)
     return '_'.join([hyperparams.data.type, prior, dim_alpha]), save_dir_name
 
 def fig2img(fig: Figure) -> Image.Image:

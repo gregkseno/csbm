@@ -18,7 +18,7 @@ from dasbm.data import (
 )
 from dasbm.models.toy import D3PM
 from dasbm.models.images import ImageD3PM
-from dasbm.models.vq import VQModel
+from dasbm.models.quantized_images import VectorQuantizer, LatentD3PM
 from dasbm.trainer import DiscreteSBMTrainer
 from dasbm.utils import create_expertiment
 
@@ -44,7 +44,7 @@ if __name__ == '__main__':
     accelerator.init_trackers(
         project_name='Discrete SBM', 
         init_kwargs={'wandb': {'name': exp_name}}, 
-        config=OmegaConf.to_container(args, resolve=True) # type: ignore
+        config=OmegaConf.to_object(args) # type: ignore
     )
     accelerator.print(f'Created experiment folder in {exp_path}.')
     accelerator.print(f'Initializing experiment with:\n{OmegaConf.to_yaml(args)}')
@@ -63,8 +63,9 @@ if __name__ == '__main__':
             testset_x = DiscreteColoredMNISTDataset(target_digit=2, data_dir=data_dir, train=False)
             testset_y = DiscreteColoredMNISTDataset(target_digit=3, data_dir=data_dir, train=False)
         elif args.data.type == 'quantized_images':
-            trainset_x = CelebaDataset(sex='male', size=args.data.dim, data_dir=data_dir)
-            trainset_y = CelebaDataset(sex='female', size=args.data.dim, data_dir=data_dir)
+            # Train set is already quantized, so, we do not set size explicitly
+            trainset_x = CelebaDataset(sex='male', data_dir=data_dir)
+            trainset_y = CelebaDataset(sex='female', data_dir=data_dir)
             testset_x = CelebaDataset(sex='male', size=args.data.dim, data_dir=data_dir, train=False)
             testset_y = CelebaDataset(sex='female', size=args.data.dim, data_dir=data_dir, train=False)
         else:
@@ -78,46 +79,42 @@ if __name__ == '__main__':
         prior_type=args.prior.type
     )
     
+    vq = None
+    if args.data.type == 'quantized_images':
+        vq = VectorQuantizer(
+            latent_size=args.data.latent_dim,
+            num_categories=args.data.num_categories, 
+            config_path=args.model.vq.config_path,
+            ckpt_path=args.model.vq.ckpt_path,     
+        )
+
     if args.data.type == 'toy':
-        forward_model = D3PM(
-            input_dim=args.data.dim,
-            num_categories=args.data.num_categories, 
-            num_timesteps=args.data.num_timesteps,
-            **args.model.to_dict()
-        )
-        backward_model = D3PM(
-            input_dim=args.data.dim,
-            num_categories=args.data.num_categories, 
-            num_timesteps=args.data.num_timesteps,
-            **args.model.to_dict()
-        )
+        model_class = D3PM
     elif args.data.type == 'images':
-        forward_model = ImageD3PM(
-            img_size=args.data.dim,
-            num_categories=args.data.num_categories, 
-            num_timesteps=args.data.num_timesteps,
-            **args.model.to_dict()
-        )
-        backward_model = ImageD3PM(
-            img_size=args.data.dim,
-            num_categories=args.data.num_categories, 
-            num_timesteps=args.data.num_timesteps,
-            **args.model.to_dict()
-        )
+        model_class = ImageD3PM
     elif args.data.type == 'quantized_images':
-        # TODO: VQ
-        vq_model = VQModel(
-            ddconfig=args.vq.ddconfig.to_dict(),
-            n_embed=args.vq.n_embed,
-            embed_dim=args.vq.embed_dim,
-            ckpt_path=args.vq.checkpoint
-        )
+        model_class = LatentD3PM
     else:
         raise NotImplementedError(f"Unknown exp type {args.data.type}!")
+    
+    forward_model = model_class(
+        input_dim=args.data.dim if args.data.type != 'quantized_images' else args.data.latent_dim,
+        num_categories=args.data.num_categories, 
+        num_timesteps=args.data.num_timesteps,
+        **OmegaConf.to_object(args.model) # type: ignore
+    )
+    backward_model = model_class(
+        input_dim=args.data.dim if args.data.type != 'quantized_images' else args.data.latent_dim,
+        num_categories=args.data.num_categories, 
+        num_timesteps=args.data.num_timesteps,
+        **OmegaConf.to_object(args.model) # type: ignore
+    )
 
     forward_optimizer = torch.optim.AdamW(forward_model.parameters(), lr=args.train.lr, betas=(0.95, 0.99)) # type: ignore
     backward_optimizer = torch.optim.AdamW(backward_model.parameters(), lr=args.train.lr, betas=(0.95, 0.99)) # type: ignore
     
+    if vq is not None:
+        vq = vq.to(accelerator.device)
     forward_model.model, forward_optimizer = accelerator.prepare(
         forward_model.model, forward_optimizer
     )
@@ -135,6 +132,7 @@ if __name__ == '__main__':
         forward_model=forward_model,
         backward_model=backward_model,
         prior=prior,
+        vq=vq,
         forward_optimizer=forward_optimizer,
         backward_optimizer=backward_optimizer,
         kl_loss_coeff=args.train.kl_loss_coeff,

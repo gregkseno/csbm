@@ -1,5 +1,5 @@
 model:
-  base_learning_rate: 0.0625
+  base_learning_rate: 4.5e-6
   target: dasbm.vq_diffusion.taming.models.cond_transformer.Net2NetTransformer
   params:
     cond_stage_config: __is_unconditional__
@@ -15,18 +15,18 @@ model:
     first_stage_config:
       target: dasbm.vq_diffusion.taming.models.vqgan.VQModel
       params:
-        embed_dim: 256
-        n_embed: 1024
+        embed_dim: 4
+        n_embed: 256
         ddconfig:
-          double_z: false
-          z_channels: 256
-          resolution: 256
+          double_z: False
+          z_channels: 4
+          resolution: 128
           in_channels: 3
           out_ch: 3
           ch: 128
-          ch_mult: [1, 1, 2, 2, 4]
+          ch_mult: [1, 2, 4]  # num_down = len(ch_mult)-1
           num_res_blocks: 2
-          attn_resolutions: [16]
+          attn_resolutions: [32]
           dropout: 0.0
         lossconfig:
           target: dasbm.vq_diffusion.taming.modules.losses.vqperceptual.DummyLoss

@@ -1,16 +1,14 @@
+import sys
 from typing import Any, Literal, Optional, Tuple, Union
 
 import numpy as np
-import ot
 from sklearn.datasets import make_swiss_roll
 from PIL import Image
 import pandas as pd
 import os
 import torch
 from torch import nn
-from torch.utils.data import Dataset
-from torchvision import transforms
-
+from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, datasets
 
 from tqdm.auto import tqdm
@@ -128,41 +126,67 @@ class DiscreteColoredMNISTDataset(BaseDataset):
             colored_image[2] = image_dec
         
         return colored_image
-    
+
+
+class ImageFolder(datasets.ImageFolder):
+    def __getitem__(self, index: int) -> Tuple[Any, Any]:
+        """
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: (sample, target) where target is class_index of the target class.
+        """
+        path, _ = self.samples[index]
+        sample = self.loader(path)
+        if self.transform is not None:
+            sample = self.transform(sample)
+
+        return sample, path
 
 class CelebaDataset(BaseDataset):
+    transform: Optional[transforms.Compose] = None
+    
     def __init__(
         self, 
         sex: Literal['male', 'female'], 
         data_dir: str,
-        size: int = 128, 
-        transform: Optional[None] = None, 
+        size: Optional[int] = None, 
         train: bool = True
     ):
-        self.transform = transform if transform else transforms.Compose([
-            transforms.Resize((size, size)),
-            transforms.ToTensor(),
-        ])
+        self.train = train
+        self.size = size
+
         attrs = pd.read_csv(os.path.join(data_dir, 'celeba', 'list_attr_celeba.csv'))
         if sex == 'male':
             attrs = attrs[attrs['Male'] != -1] # only males
         else:
             attrs = attrs[attrs['Male'] == -1]
-
         split = pd.read_csv(os.path.join(data_dir, 'celeba', 'list_eval_partition.csv'))
-        if train:
+
+        if self.train:
             split = split[split['partition'] == 0]
+            image_names = pd.merge(attrs, split, on=['image_id'], how='inner')
+            image_names['image_id'] = image_names['image_id'].str.split('.')[0] + '.npy'
+            sub_folder = 'quantized'
         else:
             split = split[split['partition'] != 0]
-
-        image_names = pd.merge(attrs, split, on=['image_id'], how='inner')
+            image_names = pd.merge(attrs, split, on=['image_id'], how='inner')
+            sub_folder = 'raw'
         image_names = image_names['image_id'].tolist()
-        self.dataset = [os.path.join(data_dir, 'celeba', 'img_align_celeba', 'img_align_celeba', image) for image in image_names]
-        
+        self.dataset = [os.path.join(data_dir, 'celeba', 'img_align_celeba', sub_folder, image) for image in image_names]
+
     def __getitem__(self, index):
-        image = Image.open(self.dataset[index])
-        image = image.convert('RGB')
-        image = self.transform(image)
+        if self.train:
+            image = torch.from_numpy(np.load(self.dataset[index]))
+        else:
+            transform = transforms.Compose([
+                transforms.Resize((self.size, self.size)),
+                transforms.ToTensor(),
+            ])
+            image = Image.open(self.dataset[index])
+            image = image.convert('RGB')
+            image = transform(image)
         return image
 
     def __len__(self):
@@ -171,7 +195,37 @@ class CelebaDataset(BaseDataset):
     def repeat(self, n: int, max_len: int):
         self.dataset = self.dataset * n
         self.dataset = self.dataset[:max_len]
-        
+
+    @staticmethod
+    def quantize_train(
+        model: nn.Module, 
+        data_dir: str,
+        size: int = 128, 
+        batch_size: int = 32,
+    ):
+        load_transform = transforms.Compose([
+            transforms.Resize((size, size)),
+            transforms.ToTensor(),
+        ])
+
+        data_dir = os.path.join(data_dir, 'celeba', 'img_align_celeba')
+        save_path = os.path.join(data_dir, 'quantized')
+        dataset = ImageFolder(data_dir, transform=load_transform, allow_empty=True) # allow_eppty because it will be handled in next line
+        if 'quantized' in dataset.classes:
+            raise FileExistsError('Folder with quantized images already exists!')
+        else:
+            os.makedirs(save_path, exist_ok=True)
+
+        dataloader = DataLoader(dataset, batch_size=batch_size)
+        for images, image_paths in tqdm(dataloader, file=sys.stdout):
+            images = images.to(model.device)
+            encoded_images = model.encode_to_cats(images).cpu().detach().numpy()
+            for encoded_image, image_path in zip(encoded_images, image_paths):
+                file_name = image_path.split('/')[-1].split('.')[0]
+                image_path = os.path.join(save_path, file_name)
+                np.save(image_path, encoded_image)  
+
+
 class CouplingDataset(BaseDataset):
     def __init__(
         self, 

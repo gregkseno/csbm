@@ -20,7 +20,7 @@ class BaseCodec(nn.Module):
         """
         raise NotImplementedError
 
-    def encode(self, img):
+    def encode_to_cats(self, img):
         raise NotImplementedError
 
     def decode(self, img_seq):

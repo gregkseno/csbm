@@ -443,7 +443,7 @@ class UNet(nn.Module):
 class ImageD3PM(nn.Module):
     def __init__(
         self, 
-        img_size: int = 32,
+        input_dim: int = 32,
         num_categories: int = 256,
         num_timesteps: int = 100, 
         in_channels: int = 3, 
@@ -457,7 +457,7 @@ class ImageD3PM(nn.Module):
     ) -> None:
         super().__init__()
         self.model = UNet(
-            img_size,
+            input_dim,
             num_categories,
             in_channels,
             num_channels,

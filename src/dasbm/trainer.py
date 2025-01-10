@@ -1,3 +1,4 @@
+import os
 import sys
 from typing import Any, Literal, Optional, Union
 
@@ -11,9 +12,9 @@ from torch.optim import Optimizer # type: ignore
 from torch.utils.data import DataLoader, RandomSampler
 from torch_ema import ExponentialMovingAverage as EMA
 
+from dasbm.models.quantized_images import LatentD3PM, VectorQuantizer
 from dasbm.models.toy import D3PM
 from dasbm.models.images import ImageD3PM
-from dasbm.models.vq import VQModel
 
 from dasbm.data import BaseDataset, CouplingDataset, Prior
 from dasbm.utils import visualize, visualize_trajectory
@@ -22,6 +23,8 @@ from dasbm.utils import visualize, visualize_trajectory
 class DiscreteSBMTrainer:
     exp_type: Literal['toy', 'images', 'quantized_images']
     forward_and_backward = {'forward', 'backward'}
+    chekpoint_path = 'EMPTY'
+
     def __init__(
         self,
         iterations: int,
@@ -29,11 +32,12 @@ class DiscreteSBMTrainer:
         prior_iterations: int,
         use_mini_batch: bool,
         accelerator: Accelerator,
-        forward_model: Union[D3PM, ImageD3PM],
-        backward_model: Union[D3PM, ImageD3PM],
+        forward_model: Union[D3PM, ImageD3PM, LatentD3PM],
+        backward_model: Union[D3PM, ImageD3PM, LatentD3PM],
         prior: Prior,
         forward_optimizer: Optimizer,
         backward_optimizer: Optimizer,
+        vq: Optional[VectorQuantizer] = None,
         exp_type: Literal['toy', 'images', 'quantized_images'] = 'toy', 
         exp_path: Optional[str] = None,
         kl_loss_coeff: float = 1.,
@@ -60,6 +64,7 @@ class DiscreteSBMTrainer:
             'backward': EMA(backward_model.parameters(), decay=ema_decay)
         }
         self.prior = prior
+        self.vq = vq
         self.optimizers = {
             'forward': forward_optimizer,
             'backward': backward_optimizer
@@ -71,6 +76,9 @@ class DiscreteSBMTrainer:
 
         self.exp_type = exp_type
         self.exp_path = exp_path
+        if exp_path is not None:
+            self.chekpoint_path = os.path.join(exp_path, 'checkpoints')            
+
         self.eval_freq = eval_freq
         self.num_trajectories = num_trajectories
         self.num_translations = num_translations
@@ -182,20 +190,28 @@ class DiscreteSBMTrainer:
         with self.emas[fb].average_parameters():
             test_x_start, test_x_end = next(iter(dataloader))
 
-            pred_x_start = self.models[fb].sample(test_x_end, self.prior)
-            if self.exp_type == 'quantized_images':
-                pred_x_start = self.models[fb].decode_code(pred_x_start)
+            if self.vq is not None:
+                encoded_test_x_end = self.vq.encode_to_cats(test_x_end)
+                pred_x_start = self.models[fb].sample(encoded_test_x_end, self.prior)
+                pred_x_start = self.vq.decode_to_image(pred_x_start)
+            else:
+                pred_x_start = self.models[fb].sample(test_x_end, self.prior)
+                
 
-            traj_start = test_x_end[:self.num_trajectories]           
+            
+            if self.vq is not None:
+                traj_start = encoded_test_x_end[:self.num_trajectories]
+            else:
+                traj_start = test_x_end[:self.num_trajectories]
             repeats = [self.num_translations] + [1] * traj_start.dim()
             trajectories = traj_start.unsqueeze(0).repeat(*repeats)
             trajectories = trajectories.reshape(-1, *traj_start.shape[1:])
             trajectories = trajectories.to(self.accelerator.device)
             trajectories = self.models[fb].sample_trajectory(trajectories, self.prior)
 
-            if self.exp_type == 'quantized_images':
-                trajectories = self.models[fb].decode_code(trajectories.reshape(-1, *traj_start.shape[1:]))
-                trajectories = trajectories.reshape(-1, self.num_trajectories, *pred_x_start.shape[1:])
+            if self.vq is not None:
+                trajectories = self.vq.decode_to_image(trajectories.reshape(-1, *traj_start.shape[1:]))
+                trajectories = trajectories.reshape(self.num_trajectories, *pred_x_start.shape)
 
             visualize(
                 exp_type=self.exp_type, 
@@ -261,6 +277,8 @@ class DiscreteSBMTrainer:
             forward_trainloader = DataLoader(forward_trainset, sampler=forward_sampler, batch_size=train_size)
             forward_trainloader = self.accelerator.prepare(forward_trainloader)
             self.markovian_projection('forward', trainloader=forward_trainloader, testloader=forward_testloader)                
+            with self.emas['forward'].average_parameters():
+                self.accelerator.save_model(self.models['forward'], self.chekpoint_path)
 
             ######## Backward ########
             if self.iteration == 1:
@@ -276,6 +294,8 @@ class DiscreteSBMTrainer:
             backward_trainloader = DataLoader(backward_trainset, sampler=backward_sampler, batch_size=train_size)
             backward_trainloader = self.accelerator.prepare(backward_trainloader)
             self.markovian_projection('backward', trainloader=backward_trainloader, testloader=backward_testloader)
+            with self.emas['backward'].average_parameters():
+                self.accelerator.save_model(self.models['backward'], self.chekpoint_path)
 
         self.accelerator.print('End training!')
 

@@ -25,10 +25,18 @@ class VectorQuantizer(TamingFFHQVQVAE):
             mapping_path=None
         )
 
+    @torch.no_grad()
+    def encode_to_cats(self, images: torch.Tensor) -> torch.Tensor:
+        return self.get_tokens(images)['token']
+    
+    @torch.no_grad()
+    def decode_to_image(self, tokens: torch.Tensor) -> torch.Tensor:
+        return self.decode(tokens)
+
 class LatentD3PM(nn.Module):
     def __init__(
         self, 
-        latent_size=16,
+        input_dim: int = 16,
         num_categories: int = 1024,
         num_timesteps: int = 100,
         hidden_dim: int = 512,
@@ -50,13 +58,13 @@ class LatentD3PM(nn.Module):
             n_layer=num_layers,
             n_embd=hidden_dim, # embed beacuse of time encoding
             n_head=num_att_heads,
-            content_seq_len=latent_size*latent_size,
+            content_seq_len=input_dim*input_dim,
             attn_pdrop=dropout,
             resid_pdrop=dropout,
             mlp_hidden_times=num_channels,
             block_activate='GELU2',
             attn_type='self',
-            content_spatial_size=[latent_size, latent_size],
+            content_spatial_size=[input_dim, input_dim],
             diffusion_step=num_timesteps,
             timestep_type='adalayernorm',
             content_emb_config=content_emb_config,
