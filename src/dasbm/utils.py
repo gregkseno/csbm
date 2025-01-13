@@ -20,9 +20,9 @@ def create_expertiment(exp_dir: str, hyperparams: DictConfig | ListConfig) -> Tu
     """Creates directory for experiment.
     Returns experiment name and path."""
     dim_alpha = f'dim_{hyperparams.data.dim}_aplha_{hyperparams.prior.alpha}'
-    if hyperparams.ce_loss_coeff == 0.:
+    if hyperparams.train.ce_loss_coeff == 0.:
         dim_alpha += '_no_ce'
-    if hyperparams.kl_loss_coeff == 0.:
+    if hyperparams.train.kl_loss_coeff == 0.:
         dim_alpha += '_no_kl'
     prior = f'{hyperparams.prior.type}'
     time = datetime.now().strftime("%d.%m.%y_%H:%M:%S")

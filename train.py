@@ -2,7 +2,7 @@ import argparse
 import sys
 from omegaconf import OmegaConf
 
-from accelerate import Accelerator
+from accelerate import Accelerator, ProfileKwargs
 from accelerate.utils import set_seed
 
 set_seed(42)
@@ -18,13 +18,17 @@ from dasbm.data import (
 )
 from dasbm.models.toy import D3PM
 from dasbm.models.images import ImageD3PM
-from dasbm.models.quantized_images import VectorQuantizer, LatentD3PM
+from dasbm.models.quantized_images import Codec, LatentD3PM
 from dasbm.trainer import DiscreteSBMTrainer
 from dasbm.utils import create_expertiment
 
 
 if __name__ == '__main__':
-    accelerator = Accelerator(log_with="wandb", cpu=False)
+    # profile_kwargs = ProfileKwargs(
+    #     activities=["cpu", "cuda"],
+    #     record_shapes=True
+    # )
+    accelerator = Accelerator(log_with="wandb", cpu=False) # , kwargs_handlers=[profile_kwargs])
     set_seed(42)
 
     parser = argparse.ArgumentParser()
@@ -79,13 +83,11 @@ if __name__ == '__main__':
         prior_type=args.prior.type
     )
     
-    vq = None
+    codec = None
     if args.data.type == 'quantized_images':
-        vq = VectorQuantizer(
-            latent_size=args.data.latent_dim,
-            num_categories=args.data.num_categories, 
-            config_path=args.model.vq.config_path,
-            ckpt_path=args.model.vq.ckpt_path,     
+        codec = Codec(
+            config_path=args.codec.config_path,
+            ckpt_path=args.codec.ckpt_path,     
         )
 
     if args.data.type == 'toy':
@@ -109,12 +111,14 @@ if __name__ == '__main__':
         num_timesteps=args.data.num_timesteps,
         **OmegaConf.to_object(args.model) # type: ignore
     )
+    # torch.compile(forward_model)
+    # torch.compile(backward_model)
 
     forward_optimizer = torch.optim.AdamW(forward_model.parameters(), lr=args.train.lr, betas=(0.95, 0.99)) # type: ignore
     backward_optimizer = torch.optim.AdamW(backward_model.parameters(), lr=args.train.lr, betas=(0.95, 0.99)) # type: ignore
     
-    if vq is not None:
-        vq = vq.to(accelerator.device)
+    if codec is not None:
+        codec = codec.to(accelerator.device)
     forward_model.model, forward_optimizer = accelerator.prepare(
         forward_model.model, forward_optimizer
     )
@@ -132,7 +136,7 @@ if __name__ == '__main__':
         forward_model=forward_model,
         backward_model=backward_model,
         prior=prior,
-        vq=vq,
+        codec=codec,
         forward_optimizer=forward_optimizer,
         backward_optimizer=backward_optimizer,
         kl_loss_coeff=args.train.kl_loss_coeff,

@@ -5,7 +5,7 @@ from omegaconf import OmegaConf
 import torch
 
 sys.path.append('./src')
-from dasbm.models.quantized_images import VectorQuantizer
+from dasbm.models.quantized_images import Codec
 from dasbm.data import CelebaDataset
 
 if __name__ == '__main__':
@@ -20,12 +20,10 @@ if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f'Using {device}!')
 
-    vq = VectorQuantizer(
-        latent_size=args.data.latent_dim,
-        num_categories=args.data.num_categories, 
-        config_path=args.model.vq.config_path,
-        ckpt_path=args.model.vq.ckpt_path,     
+    codec = Codec(
+        config_path=args.codec.config_path,
+        ckpt_path=args.codec.ckpt_path,     
     ).to(device)
 
     print('Start quantization...')
-    CelebaDataset.quantize_train(vq, data_dir, args.data.dim, args.train.batch_size)
+    CelebaDataset.quantize_train(codec, data_dir, args.data.dim, args.train.batch_size)

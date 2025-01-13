@@ -47,7 +47,7 @@ class DalleMaskImageEmbedding(BaseEmbedding):
             else:
                 height_emb = self.height_emb.unsqueeze(2) # 1 x H x D -> 1 x H x 1 x D
                 width_emb = self.width_emb.unsqueeze(1) # 1 x W x D -> 1 x 1 x W x D
-            pos_emb = (height_emb + width_emb).view(1, self.spatial_size[0] * self.spatial_size[1], -1) # 1 x H x W x D -> 1 x L xD
+            pos_emb = (height_emb + width_emb).view(1, self.spatial_size[0] * self.spatial_size[1], -1) # 1 x H x W x D -> 1 x L x D
             emb = emb + pos_emb[:, :emb.shape[1], :]
 
         return emb

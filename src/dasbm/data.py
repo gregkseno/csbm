@@ -167,7 +167,7 @@ class CelebaDataset(BaseDataset):
         if self.train:
             split = split[split['partition'] == 0]
             image_names = pd.merge(attrs, split, on=['image_id'], how='inner')
-            image_names['image_id'] = image_names['image_id'].str.split('.')[0] + '.npy'
+            image_names['image_id'] = image_names['image_id'].str.removesuffix('.jpg') + '.npy'
             sub_folder = 'quantized'
         else:
             split = split[split['partition'] != 0]

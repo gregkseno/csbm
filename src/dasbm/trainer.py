@@ -12,7 +12,7 @@ from torch.optim import Optimizer # type: ignore
 from torch.utils.data import DataLoader, RandomSampler
 from torch_ema import ExponentialMovingAverage as EMA
 
-from dasbm.models.quantized_images import LatentD3PM, VectorQuantizer
+from dasbm.models.quantized_images import LatentD3PM, Codec
 from dasbm.models.toy import D3PM
 from dasbm.models.images import ImageD3PM
 
@@ -37,7 +37,7 @@ class DiscreteSBMTrainer:
         prior: Prior,
         forward_optimizer: Optimizer,
         backward_optimizer: Optimizer,
-        vq: Optional[VectorQuantizer] = None,
+        codec: Optional[Codec] = None,
         exp_type: Literal['toy', 'images', 'quantized_images'] = 'toy', 
         exp_path: Optional[str] = None,
         kl_loss_coeff: float = 1.,
@@ -64,7 +64,7 @@ class DiscreteSBMTrainer:
             'backward': EMA(backward_model.parameters(), decay=ema_decay)
         }
         self.prior = prior
-        self.vq = vq
+        self.codec = codec
         self.optimizers = {
             'forward': forward_optimizer,
             'backward': backward_optimizer
@@ -130,6 +130,9 @@ class DiscreteSBMTrainer:
             disable=not self.accelerator.is_local_main_process
         )
         for batch in trange:
+            # start = torch.cuda.Event(enable_timing=True)
+            # end = torch.cuda.Event(enable_timing=True)
+
             self.step += 1
             self.optimizers[fb].zero_grad()
 
@@ -152,7 +155,13 @@ class DiscreteSBMTrainer:
             x_t = self.prior.sample_bridge(true_x_start, true_x_end, t) # type: ignore
 
             loss = 0
+            # start.record()
+            # with self.accelerator.profile() as prof:
             pred_x_start_logits = self.models[fb](x_t, t)
+            # end.record()
+            # torch.cuda.synchronize()
+            # self.accelerator.print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+            # self.accelerator.print(f'Predict: {start.elapsed_time(end)}')
 
             # KL-loss calculation
             true_q_posterior_logits = self.prior.posterior_logits(true_x_start, x_t, t, logits=False) # Version of DDPM
@@ -190,16 +199,14 @@ class DiscreteSBMTrainer:
         with self.emas[fb].average_parameters():
             test_x_start, test_x_end = next(iter(dataloader))
 
-            if self.vq is not None:
-                encoded_test_x_end = self.vq.encode_to_cats(test_x_end)
+            if self.codec is not None:
+                encoded_test_x_end = self.codec.encode_to_cats(test_x_end)
                 pred_x_start = self.models[fb].sample(encoded_test_x_end, self.prior)
-                pred_x_start = self.vq.decode_to_image(pred_x_start)
+                pred_x_start = self.codec.decode_to_image(pred_x_start)
             else:
                 pred_x_start = self.models[fb].sample(test_x_end, self.prior)
                 
-
-            
-            if self.vq is not None:
+            if self.codec is not None:
                 traj_start = encoded_test_x_end[:self.num_trajectories]
             else:
                 traj_start = test_x_end[:self.num_trajectories]
@@ -209,9 +216,10 @@ class DiscreteSBMTrainer:
             trajectories = trajectories.to(self.accelerator.device)
             trajectories = self.models[fb].sample_trajectory(trajectories, self.prior)
 
-            if self.vq is not None:
-                trajectories = self.vq.decode_to_image(trajectories.reshape(-1, *traj_start.shape[1:]))
-                trajectories = trajectories.reshape(self.num_trajectories, *pred_x_start.shape)
+
+            if self.codec is not None:
+                trajectories = self.codec.decode_to_image(trajectories.reshape(-1, *traj_start.shape[1:]))
+                trajectories = trajectories.reshape(-1, self.num_trajectories, *pred_x_start.shape[1:])
 
             visualize(
                 exp_type=self.exp_type, 

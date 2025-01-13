@@ -1,20 +1,20 @@
 data:
   type: quantized_images # choices: "toy", "images", "quantized_images"
   dim: 128
-  latent_dim: 128
-  num_categories: 256
+  latent_dim: 16
+  num_categories: 1024
   num_timesteps: 100
   num_skip_steps: 1
   coupling_type: independent # choices: "independent", "prior"
 model:
   hidden_dim: 512
   num_channels: 4
-  num_layers: 20
+  num_layers: 24
   num_att_heads: 16
   dropout: 0
-  vq:
-    ckpt_path: checkpoints/vqgan_celeba_f8_256.ckpt
-    config_path: configs/vqgan_celeba_f8_256.yaml
+codec:
+  ckpt_path: checkpoints/vqgan_celeba_f8_1024.ckpt
+  config_path: configs/vqgan_celeba_f8_1024.yaml
 prior:
   alpha: 0.01
   type: uniform # choices: "uniform", "gaussian", "random_neighbour", "von_mises"
@@ -22,14 +22,14 @@ train:
   batch_size: 128
   iterations: 20
   prior_iterations: 5
-  inner_iterations: 20000
+  inner_iterations: 5000
   use_mini_batch: false
   lr: 0.0004
   ce_loss_coeff: 0.001
   kl_loss_coeff: 1
   ema_decay: 0.999
 eval:
-  freq: 1000
+  freq: 300
   num_samples: 25
   num_trajectories: 4 # How many trajecotries
-  num_translations: 2 # How many times sample trajecotry from single point
+  num_translations: 1 # How many times sample trajecotry from single point

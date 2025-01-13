@@ -1,44 +1,53 @@
-from typing import Any, Optional
+from omegaconf import OmegaConf
 import torch
 import torch.nn as nn
 
 from dasbm.data import Prior
-from dasbm.vq_diffusion.modeling.codecs.image_codec.taming_gumbel_vqvae import TamingFFHQVQVAE
+from dasbm.vq_diffusion.modeling.codecs.image_codec.taming_gumbel_vqvae import TamingVQVAE
 from dasbm.vq_diffusion.modeling.transformers.transformer_utils import UnCondition2ImageTransformer
+from dasbm.vq_diffusion.taming.models.vqgan import VQModel
 
 
-class VectorQuantizer(TamingFFHQVQVAE):
+class Codec(nn.Module):
     def __init__(
         self,
         config_path: str,
         ckpt_path: str,
-        latent_size=16,
-        num_categories: int = 1024,
     ) -> None:
-        super().__init__(
-            trainable=False,
-            token_shape=[latent_size, latent_size],
-            config_path=config_path,
-            ckpt_path=ckpt_path,
-            num_tokens=num_categories,
-            quantize_number=0,
-            mapping_path=None
-        )
+        super().__init__()
+        self.config = OmegaConf.load(config_path).model.params
+        self.model = VQModel(**self.config)
+        state_dict = torch.load(ckpt_path, map_location="cpu")["state_dict"]
+        self.model.load_state_dict(state_dict, strict=False)
+        self.model = self.model.eval()
 
     @torch.no_grad()
     def encode_to_cats(self, images: torch.Tensor) -> torch.Tensor:
-        return self.get_tokens(images)['token']
+        _, _, (_, _, cats) = self.model.encode(images)
+        cats = cats.reshape(images.shape[0], -1)
+        return cats.long()
     
     @torch.no_grad()
-    def decode_to_image(self, tokens: torch.Tensor) -> torch.Tensor:
-        return self.decode(tokens)
+    def decode_to_image(self, cats: torch.Tensor) -> torch.Tensor:
+        shape = (
+            cats.shape[0], 
+            int(self.config.embed_dim ** 0.5), 
+            int(self.config.embed_dim ** 0.5), 
+            int(self.config.ddconfig.z_channels)
+        )
+        z_q = self.model.quantize.get_codebook_entry(cats, shape)
+        return self.model.decode(z_q)
+    
+    @property
+    def device(self):
+        return next(self.parameters()).device
 
 class LatentD3PM(nn.Module):
     def __init__(
         self, 
-        input_dim: int = 16,
-        num_categories: int = 1024,
-        num_timesteps: int = 100,
+        input_dim: int,
+        num_categories: int,
+        num_timesteps: int,
         hidden_dim: int = 512,
         num_channels: int = 4,
         num_layers: int = 24,
@@ -65,7 +74,7 @@ class LatentD3PM(nn.Module):
             block_activate='GELU2',
             attn_type='self',
             content_spatial_size=[input_dim, input_dim],
-            diffusion_step=num_timesteps,
+            diffusion_step=num_timesteps + 2,
             timestep_type='adalayernorm',
             content_emb_config=content_emb_config,
             mlp_type='conv_mlp',
