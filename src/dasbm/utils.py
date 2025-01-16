@@ -122,7 +122,7 @@ def visualize_toy(
     im = fig2img(fig)
 
     if exp_path is not None:
-        fig_path = os.path.join(exp_path, f'samples_{fb}_{iteration}.png')
+        fig_path = os.path.join(exp_path, f'samples_{fb}_{iteration}_step_{step}.png')
         if not os.path.isfile(fig_path):
             im.save(fig_path)
 
@@ -167,7 +167,7 @@ def visualize_images(
     im = fig2img(fig)
 
     if exp_path is not None:
-        fig_path = os.path.join(exp_path, f'samples_{fb}_{iteration}.png')
+        fig_path = os.path.join(exp_path, f'samples_{fb}_{iteration}_step_{step}.png')
         if not os.path.isfile(fig_path):
             im.save(fig_path)
     
@@ -267,7 +267,7 @@ def visualize_trajectory_toy(
     im = fig2img(fig)
 
     if exp_path is not None:
-        fig_path = os.path.join(exp_path, f'trajectories_{fb}_{iteration}.png')
+        fig_path = os.path.join(exp_path, f'trajectories_{fb}_{iteration}_step_{step}.png')
         if not os.path.isfile(fig_path):
             im.save(fig_path)
     if tracker:
@@ -316,7 +316,7 @@ def visualize_trajectory_image(
     im = fig2img(fig)
 
     if exp_path is not None:
-        fig_path = os.path.join(exp_path, f'trajectories_{fb}_{iteration}.png')
+        fig_path = os.path.join(exp_path, f'trajectories_{fb}_{iteration}_step_{step}.png')
         if not os.path.isfile(fig_path):
             im.save(fig_path)
     

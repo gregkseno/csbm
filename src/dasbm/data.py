@@ -2,6 +2,8 @@ import sys
 from typing import Any, Literal, Optional, Tuple, Union
 
 import numpy as np
+from scipy.spatial.distance import cdist
+from scipy.special import softmax
 from sklearn.datasets import make_swiss_roll
 from PIL import Image
 import pandas as pd
@@ -14,7 +16,7 @@ from torchvision import transforms, datasets
 from tqdm.auto import tqdm
 tqdm.pandas()
 
-from dasbm.utils import broadcast
+from dasbm.utils import broadcast, convert_to_numpy
 
 #########################
 #       MARGINALS       #
@@ -290,32 +292,6 @@ def uniform_prior(
 
     return p_onestep_mats.transpose(1, 2), p_cum_mats
 
-def random_neighbour_prior(
-    alpha: float,
-    num_categories: int, 
-    num_timesteps: int,
-    num_skip_steps: int
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    diag_values = 1 - alpha
-    off_diag_values = alpha / 2
-    p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float64)
-
-    np.fill_diagonal(p_onestep_mats, diag_values)
-    p_onestep_mats += np.diag([off_diag_values] * (num_categories - 1), k=1)
-    p_onestep_mats += np.diag([off_diag_values] * (num_categories - 1), k=-1)
-    p_onestep_mats[0, 1] += off_diag_values
-    # p_onestep_mats[1, 0] += off_diag_values
-    p_onestep_mats[-1, -2] += off_diag_values
-    # p_onestep_mats[-2, -1] += off_diag_values
-    p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
-
-    p_onestep_mats = torch.from_numpy(p_onestep_mats)
-    p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
-    p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
-    p_cum_mats = get_cum_matrices(p_onestep_mats)
-
-    return p_onestep_mats.transpose(1, 2), p_cum_mats
-
 def von_mises_prior(
     alpha: float,
     num_categories: int, 
@@ -346,8 +322,8 @@ def gaussian_prior(
 ):
     p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float64)
     # indices = np.arange(num_categories)[None, ...]
-    # values = -(indices - indices.T)**2
-    # p_onestep_mats = values / alpha
+    # values = -4 * (indices - indices.T)**2 / (alpha**2 * (num_categories - 1)**2)
+    # p_onestep_mats = softmax(values, axis=1)
     norm_const = -4 * np.arange(
         start=-(num_categories-1), 
         stop=(num_categories+1), 
@@ -373,6 +349,39 @@ def gaussian_prior(
 
     return p_onestep_mats.transpose(1, 2), p_cum_mats
 
+def centroid_gaussian_prior(
+    alpha: float,
+    num_categories: int,
+    num_timesteps: int, 
+    num_skip_steps: int,
+    centroids: torch.Tensor | np.ndarray # num_categories x seq_length
+):
+    centroids = convert_to_numpy(centroids)
+    distances = cdist(centroids, centroids, metric='euclidean')  # num_categories x num_categories
+    p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float64)
+    norm_const = np.array([
+        np.exp(-4 * (distances[i, :]**2) / (alpha**2)).sum()
+        for i in range(-(num_categories-1), num_categories-1, 1)
+    ])
+
+    for i in range(num_categories):
+        for j in range(num_categories):
+            if i == j:
+                continue
+            value = -4 * (distances[i, j]**2) / (alpha**2)
+            p_onestep_mats[i][j] = np.exp(value) / norm_const[i]
+
+    for i in range(num_categories):
+        p_onestep_mats[i][i] = 1 - p_onestep_mats[i].sum()
+    p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
+
+    p_onestep_mats = torch.from_numpy(p_onestep_mats) # .softmax(dim=1)
+    p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
+    p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
+    p_cum_mats = get_cum_matrices(p_onestep_mats)
+
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
+
 
 # Cumulative returns with following pattern
 # 0         1           2           ...         N           N+1
@@ -386,16 +395,18 @@ def gaussian_prior(
 class Prior(nn.Module):
     def __init__(
         self, 
+        alpha: float,
         num_categories: int,
         num_timesteps: int,
         num_skip_steps: int,
         prior_type: Literal[
             'uniform', 
-            'random_neighbour', 
             'gaussian',
-            'von_mises'
+            'centroid_gaussian',
+            'von_mises',
         ] = 'uniform',
-        alpha: Optional[float] = None
+        centroids: Optional[torch.Tensor] = None
+
     ) -> None:
         super().__init__()
         self.num_categories = num_categories
@@ -403,53 +414,52 @@ class Prior(nn.Module):
         self.num_skip_steps = num_skip_steps
         self.eps = 1e-6
 
-        if prior_type == 'gaussian' and alpha is not None:
+        if prior_type == 'gaussian':
             p_onestep, p_cum = gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps)
-        elif prior_type == 'von_mises' and alpha is not None:
+        elif prior_type == 'von_mises':
             p_onestep, p_cum = von_mises_prior(alpha, num_categories, num_timesteps, num_skip_steps)
-        elif prior_type == 'uniform' and alpha is not None:
+        elif prior_type == 'uniform':
             p_onestep, p_cum = uniform_prior(alpha, num_categories, num_timesteps, num_skip_steps)
-        elif prior_type == 'random_neighbour' and alpha is not None:
-            p_onestep, p_cum = random_neighbour_prior(alpha, num_categories, num_timesteps, num_skip_steps)
+        elif prior_type == 'centroid_gaussian' and centroids is not None:
+            p_onestep, p_cum = centroid_gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps, centroids)
         else:
-            raise NotImplementedError(f'Got unknown prior: {prior_type} or alpha is None!')
+            raise NotImplementedError(f'Got unknown prior: {prior_type} or centroids is None!')
         self.register_buffer("p_onestep", p_onestep)
         self.register_buffer("p_cum", p_cum)
         
-    def probs(
+    def extract(
         self, 
         mat_type: Literal['onestep', 'cumulative'], 
         t: torch.Tensor, 
         *,
-        x_start: Optional[torch.Tensor] = None,
-        x_end: Optional[torch.Tensor] = None
+        row_id: Optional[torch.Tensor] = None,
+        column_id: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        """Extracts probs from transition matrix."""
+        """Extracts row/column/element from transition matrix."""
         p_mat = self.p_onestep if mat_type == 'onestep' else self.p_cum
         
-        if x_start is not None and x_end is not None:
-            t = broadcast(t, x_start.dim() - 1)
-            return p_mat[t, x_start, x_end].unsqueeze(-1)
-        if x_start is not None and x_end is None:
-            t = broadcast(t, x_start.dim() - 1)
-            return p_mat[t, x_start]
-        if x_start is None and x_end is not None:
-            t = broadcast(t, x_end.dim() - 1)
-            return p_mat[t, :, x_end]
+        if row_id is not None and column_id is not None:
+            t = broadcast(t, row_id.dim() - 1)
+            return p_mat[t, row_id, column_id].unsqueeze(-1)
+        if row_id is not None and column_id is None:
+            t = broadcast(t, row_id.dim() - 1)
+            return p_mat[t, row_id]
+        if row_id is None and column_id is not None:
+            t = broadcast(t, column_id.dim() - 1)
+            return p_mat[t, :, column_id]
         raise ValueError('x_start and x_end cannot be None both!')
 
     def sample_bridge(self, x_start: torch.Tensor, x_end: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         r"""Samples from bridge $p(x_{t} | x_{0}, x_{1})$."""
-        p_start_t = self.probs('cumulative', t, x_start=x_start)
-        p_t_end = self.probs('cumulative', self.num_timesteps + 1 - t, x_end=x_end) # TODO: убедиться что это корректно
-        log_probs = torch.log(p_start_t + self.eps) + torch.log(p_t_end + self.eps) # - torch.log(p_start_end + self.eps)
+        p_start_t = self.extract('cumulative', t, row_id=x_start)
+        p_t_end = self.extract('cumulative', self.num_timesteps + 1 - t, column_id=x_end) # TODO: убедиться что это корректно
+        log_probs = torch.log(p_start_t + self.eps) + torch.log(p_t_end + self.eps)
+        log_probs = log_probs - log_probs.logsumexp(dim=-1, keepdim=True)
         
         noise = torch.rand_like(log_probs)
         noise = torch.clamp(noise, min=torch.finfo(noise.dtype).tiny, max=1.)
         gumbel_noise = -torch.log(-torch.log(noise))
         x_t = torch.argmax(log_probs + gumbel_noise, dim=-1)
-        # probs = log_probs.softmax(dim=-1).view(-1, self.num_categories)
-        # x_t = probs.multinomial(num_samples=1).view(x_start.shape)
 
         is_final_step = broadcast(t, x_start.dim() - 1) == self.num_timesteps + 1
         x_t = torch.where(is_final_step, x_end, x_t)
@@ -470,12 +480,13 @@ class Prior(nn.Module):
         assert x_start_logits.shape == x_t.shape + (self.num_categories,), f"x_start_logits.shape: {x_start_logits.shape}, x_t.shape: {x_t.shape}"
         
         # fact1 is "guess of x_{t}" from x_{t-1}
-        fact1 = self.probs('onestep', t, x_start=x_t)
+        fact1 = self.extract('onestep', t, row_id=x_t)
 
         # fact2 is "guess of x_{t-1}" from x_{0}
         x_start_probs = x_start_logits.softmax(dim=-1)  # bs, ..., num_categories
         fact2 = torch.einsum("b...c,bcd->b...d", x_start_probs, self.p_cum[t - 1].to(dtype=x_start_probs.dtype))
         p_posterior_logits = torch.log(fact1 + self.eps) + torch.log(fact2 + self.eps)
+        p_posterior_logits = p_posterior_logits - p_posterior_logits.logsumexp(dim=-1, keepdim=True) # Normalize
         
         # Use `torch.where` because when `t == 1` x_start_logits are actually x_0 already
         is_first_step = broadcast(t, x_t.dim()) == 1

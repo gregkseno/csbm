@@ -18,12 +18,13 @@ from dasbm.models.images import ImageD3PM
 
 from dasbm.data import BaseDataset, CouplingDataset, Prior
 from dasbm.utils import visualize, visualize_trajectory
+from dasbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 
 
 class DiscreteSBMTrainer:
     exp_type: Literal['toy', 'images', 'quantized_images']
     forward_and_backward = {'forward', 'backward'}
-    chekpoint_path = 'EMPTY'
+    checkpoint_path = 'EMPTY'
 
     def __init__(
         self,
@@ -37,6 +38,8 @@ class DiscreteSBMTrainer:
         prior: Prior,
         forward_optimizer: Optimizer,
         backward_optimizer: Optimizer,
+        forward_scheduler: Optional[ReduceLROnPlateauWithWarmup],
+        backward_scheduler: Optional[ReduceLROnPlateauWithWarmup],
         codec: Optional[Codec] = None,
         exp_type: Literal['toy', 'images', 'quantized_images'] = 'toy', 
         exp_path: Optional[str] = None,
@@ -69,6 +72,12 @@ class DiscreteSBMTrainer:
             'forward': forward_optimizer,
             'backward': backward_optimizer
         }
+        self.schedulers = None
+        if forward_scheduler is not None and backward_scheduler is not None:
+            self.schedulers = {
+                'forward': forward_scheduler,
+                'backward': backward_scheduler
+            }
 
         self.kl_loss_coeff = kl_loss_coeff
         self.ce_loss_coeff = ce_loss_coeff
@@ -77,7 +86,7 @@ class DiscreteSBMTrainer:
         self.exp_type = exp_type
         self.exp_path = exp_path
         if exp_path is not None:
-            self.chekpoint_path = os.path.join(exp_path, 'checkpoints')            
+            self.checkpoint_path = os.path.join(exp_path, 'checkpoints')            
 
         self.eval_freq = eval_freq
         self.num_trajectories = num_trajectories
@@ -138,13 +147,12 @@ class DiscreteSBMTrainer:
 
             if self.iteration == 1:
                 true_x_start, true_x_end = batch
+                if self.use_mini_batch:
+                    pi = self._get_map(true_x_start.float(), true_x_end.float())
+                    i, j = self._sample_map(pi, true_x_start.shape[0])
+                    true_x_start, true_x_end = true_x_start[i], true_x_end[j]
             else:
                 true_x_start, true_x_end = batch, self.models[bf].sample(batch, self.prior)
-
-            if self.use_mini_batch:
-                pi = self._get_map(true_x_start.float(), true_x_end.float())
-                i, j = self._sample_map(pi, true_x_start.shape[0])
-                true_x_start, true_x_end = true_x_start[i], true_x_end[j]
 
             t = torch.randint(
                 low=1, 
@@ -175,6 +183,8 @@ class DiscreteSBMTrainer:
 
             self.accelerator.backward(loss)
             self.optimizers[fb].step()
+            if self.schedulers is not None:
+                self.schedulers[fb].step(kl_loss.detach())
             self.emas[fb].update()
 
             info = {
@@ -215,7 +225,6 @@ class DiscreteSBMTrainer:
             trajectories = trajectories.reshape(-1, *traj_start.shape[1:])
             trajectories = trajectories.to(self.accelerator.device)
             trajectories = self.models[fb].sample_trajectory(trajectories, self.prior)
-
 
             if self.codec is not None:
                 trajectories = self.codec.decode_to_image(trajectories.reshape(-1, *traj_start.shape[1:]))
@@ -282,11 +291,15 @@ class DiscreteSBMTrainer:
                 forward_trainset = trainset_y
             
             forward_sampler = RandomSampler(forward_trainset, replacement=True, num_samples=eval_size)
-            forward_trainloader = DataLoader(forward_trainset, sampler=forward_sampler, batch_size=train_size)
+            forward_trainloader = DataLoader(forward_trainset, sampler=forward_sampler, batch_size=train_size, num_workers=8)
             forward_trainloader = self.accelerator.prepare(forward_trainloader)
             self.markovian_projection('forward', trainloader=forward_trainloader, testloader=forward_testloader)                
             with self.emas['forward'].average_parameters():
-                self.accelerator.save_model(self.models['forward'], self.chekpoint_path)
+                self.accelerator.print(f'Saving chekpoint to {self.checkpoint_path}')
+                self.accelerator.save_model(
+                    self.models['forward'], 
+                    os.path.join(self.checkpoint_path, f'forward_{self.iteration}')
+                )
 
             ######## Backward ########
             if self.iteration == 1:
@@ -299,12 +312,15 @@ class DiscreteSBMTrainer:
             else:
                 backward_trainset = trainset_x
             backward_sampler = RandomSampler(backward_trainset, replacement=True, num_samples=eval_size)
-            backward_trainloader = DataLoader(backward_trainset, sampler=backward_sampler, batch_size=train_size)
+            backward_trainloader = DataLoader(backward_trainset, sampler=backward_sampler, batch_size=train_size, num_workers=8)
             backward_trainloader = self.accelerator.prepare(backward_trainloader)
             self.markovian_projection('backward', trainloader=backward_trainloader, testloader=backward_testloader)
             with self.emas['backward'].average_parameters():
-                self.accelerator.save_model(self.models['backward'], self.chekpoint_path)
-
+                self.accelerator.print(f'Saving chekpoint to {self.checkpoint_path}')
+                self.accelerator.save_model(
+                    self.models['backward'], 
+                    os.path.join(self.checkpoint_path, f'backward_{self.iteration}')
+                )
         self.accelerator.print('End training!')
 
     def _get_map(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:

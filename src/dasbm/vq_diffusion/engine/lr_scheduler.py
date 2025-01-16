@@ -1,13 +1,12 @@
 import torch
 import math
 # from torch.optim import AdamW, Adam
-from torch._six import inf
 from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler, CosineAnnealingLR
 
 
 
-class ReduceLROnPlateauWithWarmup(object):
+class ReduceLROnPlateauWithWarmup(_LRScheduler):
     """Reduce learning rate when a metric has stopped improving.
     Models often benefit from reducing the learning rate by a factor
     of 2-10 once learning stagnates. This scheduler reads a metrics
@@ -106,7 +105,7 @@ class ReduceLROnPlateauWithWarmup(object):
             self.warmup_lrs = None
         if self.warmup > self.last_epoch:
             curr_lrs = [group['lr'] for group in self.optimizer.param_groups]
-            self.warmup_lr_steps = [max(0, (self.warmup_lrs[i] - curr_lrs[i])/float(self.warmup)) for i in range(len(curr_lrs))]
+            self.warmup_lr_steps = [max(0, (self.warmup_lrs[i] - curr_lrs[i])/float(self.warmup)) for i in range(len(curr_lrs))] # type: ignore
         else:
             self.warmup_lr_steps = None
 
@@ -129,7 +128,7 @@ class ReduceLROnPlateauWithWarmup(object):
                 self.best = current
                 self.num_bad_epochs = 0
             else:
-                self.num_bad_epochs += 1
+                self.num_bad_epochs += 1 # type: ignore
 
             if self.in_cooldown:
                 self.cooldown_counter -= 1
@@ -156,7 +155,7 @@ class ReduceLROnPlateauWithWarmup(object):
         # used for warmup
         for i, param_group in enumerate(self.optimizer.param_groups):
             old_lr = float(param_group['lr'])
-            new_lr = max(old_lr + self.warmup_lr_steps[i], self.min_lrs[i])
+            new_lr = max(old_lr + self.warmup_lr_steps[i], self.min_lrs[i]) # type: ignore
             param_group['lr'] = new_lr
             if self.verbose:
                 print('Epoch {:5d}: increasing learning rate'
@@ -188,9 +187,9 @@ class ReduceLROnPlateauWithWarmup(object):
             raise ValueError('threshold mode ' + threshold_mode + ' is unknown!')
 
         if mode == 'min':
-            self.mode_worse = inf
+            self.mode_worse = float('inf')
         else:  # mode == 'max':
-            self.mode_worse = -inf
+            self.mode_worse = float('-inf')
 
         self.mode = mode
         self.threshold = threshold
@@ -259,7 +258,7 @@ class CosineAnnealingLRWithWarmup(object):
         # used for warmup
         for i, param_group in enumerate(self.optimizer.param_groups):
             old_lr = float(param_group['lr'])
-            new_lr = old_lr + self.warmup_lr_steps[i]
+            new_lr = old_lr + self.warmup_lr_steps[i] # type: ignore
             param_group['lr'] = new_lr
             self.max_lrs[i] = max(self.max_lrs[i], new_lr)
             if self.verbose:
@@ -279,7 +278,7 @@ class CosineAnnealingLRWithWarmup(object):
             self.warmup_lrs = None
         if self.warmup > self.last_epoch:
             curr_lrs = [group['lr'] for group in self.optimizer.param_groups]
-            self.warmup_lr_steps = [max(0, (self.warmup_lrs[i] - curr_lrs[i])/float(self.warmup)) for i in range(len(curr_lrs))]
+            self.warmup_lr_steps = [max(0, (self.warmup_lrs[i] - curr_lrs[i])/float(self.warmup)) for i in range(len(curr_lrs))] # type: ignore
         else:
             self.warmup_lr_steps = None
 

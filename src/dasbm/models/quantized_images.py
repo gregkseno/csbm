@@ -20,9 +20,11 @@ class Codec(nn.Module):
         state_dict = torch.load(ckpt_path, map_location="cpu")["state_dict"]
         self.model.load_state_dict(state_dict, strict=False)
         self.model = self.model.eval()
+        self.centroids = self.model.quantize.embedding.weight.data
 
     @torch.no_grad()
     def encode_to_cats(self, images: torch.Tensor) -> torch.Tensor:
+        images = 2 * images - 1
         _, _, (_, _, cats) = self.model.encode(images)
         cats = cats.reshape(images.shape[0], -1)
         return cats.long()
@@ -36,7 +38,10 @@ class Codec(nn.Module):
             int(self.config.ddconfig.z_channels)
         )
         z_q = self.model.quantize.get_codebook_entry(cats, shape)
-        return self.model.decode(z_q)
+        images = self.model.decode(z_q)
+        images = torch.clamp(images, -1., 1.)
+        images = (images + 1.)/2.
+        return images
     
     @property
     def device(self):

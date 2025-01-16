@@ -19,18 +19,12 @@ from dasbm.data import (
 from dasbm.models.toy import D3PM
 from dasbm.models.images import ImageD3PM
 from dasbm.models.quantized_images import Codec, LatentD3PM
+from dasbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 from dasbm.trainer import DiscreteSBMTrainer
 from dasbm.utils import create_expertiment
 
 
 if __name__ == '__main__':
-    # profile_kwargs = ProfileKwargs(
-    #     activities=["cpu", "cuda"],
-    #     record_shapes=True
-    # )
-    accelerator = Accelerator(log_with="wandb", cpu=False) # , kwargs_handlers=[profile_kwargs])
-    set_seed(42)
-
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, required=True)
     parser.add_argument('--exp_dir', type=str, required=True)
@@ -38,8 +32,18 @@ if __name__ == '__main__':
     args = parser.parse_args()
     exp_dir = args.exp_dir
     data_dir = args.data_dir
-
     args = OmegaConf.load(args.config)
+
+    # profile_kwargs = ProfileKwargs(
+    #     activities=["cpu", "cuda"],
+    #     record_shapes=True
+    # )
+    accelerator = Accelerator(
+        log_with="wandb", 
+        cpu=False, 
+        gradient_accumulation_steps=args.train.gradient_accumulation_steps
+    ) # , kwargs_handlers=[profile_kwargs])
+    set_seed(42)
     
     exp_name, exp_path = None, None
     if accelerator.is_main_process:
@@ -114,9 +118,16 @@ if __name__ == '__main__':
     # torch.compile(forward_model)
     # torch.compile(backward_model)
 
-    forward_optimizer = torch.optim.AdamW(forward_model.parameters(), lr=args.train.lr, betas=(0.95, 0.99)) # type: ignore
-    backward_optimizer = torch.optim.AdamW(backward_model.parameters(), lr=args.train.lr, betas=(0.95, 0.99)) # type: ignore
+    forward_optimizer = torch.optim.AdamW(forward_model.parameters(), **args.train.optimizer) # type: ignore
+    backward_optimizer = torch.optim.AdamW(backward_model.parameters(), **args.train.optimizer) # type: ignore
     
+    forward_scheduler, backward_scheduler = None, None
+    if 'scheduler' in args.train:
+        forward_scheduler = ReduceLROnPlateauWithWarmup(forward_optimizer, **args.train.scheduler)
+        backward_scheduler = ReduceLROnPlateauWithWarmup(backward_optimizer, **args.train.scheduler)
+        forward_scheduler = accelerator.prepare(forward_scheduler)
+        backward_scheduler = accelerator.prepare(backward_scheduler)
+
     if codec is not None:
         codec = codec.to(accelerator.device)
     forward_model.model, forward_optimizer = accelerator.prepare(
@@ -139,6 +150,8 @@ if __name__ == '__main__':
         codec=codec,
         forward_optimizer=forward_optimizer,
         backward_optimizer=backward_optimizer,
+        forward_scheduler=forward_scheduler,
+        backward_scheduler=backward_scheduler,
         kl_loss_coeff=args.train.kl_loss_coeff,
         ce_loss_coeff=args.train.ce_loss_coeff,
         ema_decay=args.train.ema_decay,
