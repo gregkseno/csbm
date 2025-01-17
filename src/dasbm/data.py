@@ -154,10 +154,12 @@ class CelebaDataset(BaseDataset):
         sex: Literal['male', 'female'], 
         data_dir: str,
         size: Optional[int] = None, 
-        train: bool = True
+        train: bool = True,
+        return_names: bool = True
     ):
         self.train = train
         self.size = size
+        self.return_names = return_names
 
         attrs = pd.read_csv(os.path.join(data_dir, 'celeba', 'list_attr_celeba.csv'))
         if sex == 'male':
@@ -189,6 +191,9 @@ class CelebaDataset(BaseDataset):
             image = Image.open(self.dataset[index])
             image = image.convert('RGB')
             image = transform(image)
+
+        if self.return_names:
+           return image, self.dataset[index].split('/')[-1]
         return image
 
     def __len__(self):

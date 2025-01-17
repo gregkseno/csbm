@@ -139,59 +139,52 @@ class DiscreteSBMTrainer:
             disable=not self.accelerator.is_local_main_process
         )
         for batch in trange:
-            # start = torch.cuda.Event(enable_timing=True)
-            # end = torch.cuda.Event(enable_timing=True)
-
             self.step += 1
-            self.optimizers[fb].zero_grad()
 
-            if self.iteration == 1:
-                true_x_start, true_x_end = batch
-                if self.use_mini_batch:
-                    pi = self._get_map(true_x_start.float(), true_x_end.float())
-                    i, j = self._sample_map(pi, true_x_start.shape[0])
-                    true_x_start, true_x_end = true_x_start[i], true_x_end[j]
-            else:
-                true_x_start, true_x_end = batch, self.models[bf].sample(batch, self.prior)
+            with self.accelerator.accumulate():
+                self.optimizers[fb].zero_grad()
 
-            t = torch.randint(
-                low=1, 
-                high=self.models[fb].num_timesteps + 2,
-                size=(true_x_start.shape[0],), 
-                device=self.accelerator.device
-            )
-            x_t = self.prior.sample_bridge(true_x_start, true_x_end, t) # type: ignore
+                if self.iteration == 1:
+                    true_x_start, true_x_end = batch
+                    if self.use_mini_batch:
+                        pi = self._get_map(true_x_start.float(), true_x_end.float())
+                        i, j = self._sample_map(pi, true_x_start.shape[0])
+                        true_x_start, true_x_end = true_x_start[i], true_x_end[j]
+                else:
+                    true_x_start, true_x_end = batch, self.models[bf].sample(batch, self.prior)
 
-            loss = 0
-            # start.record()
-            # with self.accelerator.profile() as prof:
-            pred_x_start_logits = self.models[fb](x_t, t)
-            # end.record()
-            # torch.cuda.synchronize()
-            # self.accelerator.print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
-            # self.accelerator.print(f'Predict: {start.elapsed_time(end)}')
+                t = torch.randint(
+                    low=1, 
+                    high=self.models[fb].num_timesteps + 2,
+                    size=(true_x_start.shape[0],), 
+                    device=self.accelerator.device
+                )
+                x_t = self.prior.sample_bridge(true_x_start, true_x_end, t) # type: ignore
 
-            # KL-loss calculation
-            true_q_posterior_logits = self.prior.posterior_logits(true_x_start, x_t, t, logits=False) # Version of DDPM
-            pred_q_posterior_logits = self.prior.posterior_logits(pred_x_start_logits, x_t, t, logits=True)
-            kl_loss = self.kl_loss(true_q_posterior_logits, pred_q_posterior_logits)
-            loss += self.kl_loss_coeff * kl_loss
+                loss = 0
+                pred_x_start_logits = self.models[fb](x_t, t)
 
-            # CE-loss calculation
-            ce_loss = self.ce_loss(true_x_start, pred_x_start_logits)
-            loss += self.ce_loss_coeff * ce_loss
+                # KL-loss calculation
+                true_q_posterior_logits = self.prior.posterior_logits(true_x_start, x_t, t, logits=False) # Version of DDPM
+                pred_q_posterior_logits = self.prior.posterior_logits(pred_x_start_logits, x_t, t, logits=True)
+                kl_loss = self.kl_loss(true_q_posterior_logits, pred_q_posterior_logits)
+                loss += self.kl_loss_coeff * kl_loss
 
-            self.accelerator.backward(loss)
-            self.optimizers[fb].step()
-            if self.schedulers is not None:
-                self.schedulers[fb].step(kl_loss.detach())
-            self.emas[fb].update()
+                # CE-loss calculation
+                ce_loss = self.ce_loss(true_x_start, pred_x_start_logits)
+                loss += self.ce_loss_coeff * ce_loss
+
+                self.accelerator.backward(loss)
+                self.optimizers[fb].step()
+                if self.schedulers is not None:
+                    self.schedulers[fb].step(kl_loss.detach())
+                self.emas[fb].update()
 
             info = {
                 "kl_loss": self.accelerator.reduce(kl_loss.detach(), 'mean'),  # type: ignore
                 "ce_loss": self.accelerator.reduce(ce_loss.detach(), 'mean')  # type: ignore
             }
-            
+                
             if self.step % self.eval_freq == 0:
                 self.accelerator.print(f'{fb.capitalize()} D-IMF iteration: {self.iteration}: kl_loss: {info["kl_loss"]}, ce_loss: {info["ce_loss"]}')
                 self.eval(fb=fb, dataloader=testloader, step=self.step)
