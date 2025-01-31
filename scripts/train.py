@@ -10,19 +10,19 @@ set_seed(42)
 import torch
 
 sys.path.append('../src')
-from dasbm.data import (
+from csbm.data import (
     CelebaDataset,
     DiscreteGaussianDataset, 
     DiscreteSwissRollDataset, 
     DiscreteColoredMNISTDataset, 
     Prior
 )
-from dasbm.models.toy import D3PM
-from dasbm.models.images import ImageD3PM
-from dasbm.models.quantized_images import Codec, LatentD3PM
-from dasbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
-from dasbm.trainer import СSBMTrainer
-from dasbm.utils import create_expertiment
+from csbm.models.toy import D3PM
+from csbm.models.images import ImageD3PM
+from csbm.models.quantized_images import Codec, LatentD3PM
+from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
+from csbm.trainer import СSBMTrainer
+from csbm.utils import create_expertiment
 
 
 if __name__ == '__main__':

@@ -13,8 +13,8 @@ set_seed(42)
 from torch.utils.data import DataLoader
 
 sys.path.append('../src')
-from dasbm.data import CelebaDataset, Prior
-from dasbm.models.quantized_images import Codec, LatentD3PM
+from csbm.data import CelebaDataset, Prior
+from csbm.models.quantized_images import Codec, LatentD3PM
 
 
 def generate_images(

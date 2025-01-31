@@ -5,8 +5,8 @@ from omegaconf import OmegaConf
 import torch
 
 sys.path.append('../src')
-from dasbm.models.quantized_images import Codec
-from dasbm.data import CelebaDataset
+from csbm.models.quantized_images import Codec
+from csbm.data import CelebaDataset
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

@@ -1,6 +1,6 @@
 model:
   base_learning_rate: 4.5e-6
-  target: dasbm.vq_diffusion.taming.models.vqgan.VQModel
+  target: csbm.vq_diffusion.taming.models.vqgan.VQModel
   params:
     embed_dim: 256
     n_embed: 1024
@@ -16,4 +16,4 @@ model:
       attn_resolutions: [16]
       dropout: 0.0
     lossconfig:
-      target: dasbm.vq_diffusion.taming.modules.losses.vqperceptual.DummyLoss
+      target: csbm.vq_diffusion.taming.modules.losses.vqperceptual.DummyLoss
