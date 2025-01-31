@@ -2,14 +2,14 @@ data:
   type: toy # choices: "toy", "images", "quantized_images"
   dim: 2
   num_categories: 50
-  num_timesteps: 100
-  num_skip_steps: 1
+  num_timesteps: 10
+  num_skip_steps: 10
   coupling_type: independent # choices: "independent", "prior"
 model:
   timestep_dim: 2
   layers: [128, 128, 128]
 prior:
-  alpha: 0.01
+  alpha: 0.02
   type: gaussian # choices: "uniform", "gaussian", "von_mises"
 train:
   batch_size: 512
@@ -28,5 +28,5 @@ train:
 eval:
   freq: 1000
   num_samples: 1024
-  num_trajectories: 2 # How many trajecotries
+  num_trajectories: 4 # How many trajecotries
   num_translations: 3 # How many times sample trajecotry from single point

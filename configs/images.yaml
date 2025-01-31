@@ -2,8 +2,8 @@ data:
   type: images # choices: "toy", "images", "quantized_images"
   dim: 32
   num_categories: 256
-  num_timesteps: 100
-  num_skip_steps: 1
+  num_timesteps: 25
+  num_skip_steps: 4
   coupling_type: independent # choices: "independent", "prior"
 model:
   in_channels: 3
@@ -27,14 +27,13 @@ train:
   iterations: 20
   prior_iterations: 5
   inner_iterations: 20000
-  use_mini_batch: false
+  use_mini_batch: true
   ce_loss_coeff: 0.001
   kl_loss_coeff: 1
   ema_decay: 0.9999
   optimizer:
     lr: 0.0002
-    betas: !!python/tuple [0.9, 0.96]
-    weight_decay: 4.5e-2
+    betas: [0.95, 0.99]
 eval:
   freq: 1000
   num_samples: 25

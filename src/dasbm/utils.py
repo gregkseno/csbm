@@ -31,6 +31,8 @@ def create_expertiment(exp_dir: str, hyperparams: DictConfig | ListConfig) -> Tu
         exp_dir, hyperparams.data.type, prior, dim_alpha + '_' + time
     )
     os.makedirs(os.path.join(save_dir_name, 'checkpoints'), exist_ok=True)
+    os.makedirs(os.path.join(save_dir_name, 'samples'), exist_ok=True)
+    os.makedirs(os.path.join(save_dir_name, 'trajectories'), exist_ok=True)
     return '_'.join([hyperparams.data.type, prior, dim_alpha]), save_dir_name
 
 def fig2img(fig: Figure) -> Image.Image:
@@ -122,7 +124,7 @@ def visualize_toy(
     im = fig2img(fig)
 
     if exp_path is not None:
-        fig_path = os.path.join(exp_path, f'samples_{fb}_{iteration}_step_{step}.png')
+        fig_path = os.path.join(exp_path, 'samples', f'samples_{fb}_{iteration}_step_{step}.png')
         if not os.path.isfile(fig_path):
             im.save(fig_path)
 
@@ -167,7 +169,7 @@ def visualize_images(
     im = fig2img(fig)
 
     if exp_path is not None:
-        fig_path = os.path.join(exp_path, f'samples_{fb}_{iteration}_step_{step}.png')
+        fig_path = os.path.join(exp_path, 'samples', f'samples_{fb}_{iteration}_step_{step}.png')
         if not os.path.isfile(fig_path):
             im.save(fig_path)
     
@@ -213,11 +215,13 @@ def visualize_trajectory_toy(
     iteration: Optional[int] = None, 
     exp_path: Optional[str] = None,
     tracker: Optional[GeneralTracker] = None,
-    step: Optional[int] = None
+    step: Optional[int] = None,
+    dpi: int = 200,
+    use_legend: bool = True,
 ):
     if figsize is None:
         figsize = (8, 8)
-    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
     ax.grid(zorder=-20)
     ax.get_xaxis().set_ticklabels([])
     ax.get_yaxis().set_ticklabels([])
@@ -230,17 +234,17 @@ def visualize_trajectory_toy(
 
     ax.scatter(
         pred_x_start[:, 0], pred_x_start[:, 1], 
-        c="salmon", s=64, edgecolors="black", 
-        label = "Fitted distribution", zorder=1
+        c="salmon", s=25, edgecolors="black", 
+        label = "Fitted distribution", zorder=1, linewidth=0.5
     )
     ax.scatter(
         trajectories[0, :, 0], trajectories[0, :, 1], 
-        c="lime", s=128, edgecolors="black", 
+        c="lime", s=60, edgecolors="black", 
         label=r"Trajectory start ($x \sim p_0$)", zorder=3
     )
     ax.scatter(
         trajectories[-1, :, 0], trajectories[-1, :, 1], 
-        c="yellow", s=64, edgecolors="black", 
+        c="yellow", s=22, edgecolors="black", 
         label = r"Trajectory end (fitted)", zorder=3
     )
     for i in range(num_trajectories):
@@ -259,15 +263,18 @@ def visualize_trajectory_toy(
                 trajectories[:, i, 0], trajectories[:, i, 1], 
                 "grey", markeredgecolor="black", linewidth=0.5, zorder=2
             )
-    
-    ax.legend(loc="lower right")
+    if use_legend:
+        ax.legend(loc="upper left")
+
+    # ax.set_xlim([-2, 52])
+    # ax.set_ylim([-2, 52])
     plt.show()
     
     fig.tight_layout(pad=0.5)
     im = fig2img(fig)
 
     if exp_path is not None:
-        fig_path = os.path.join(exp_path, f'trajectories_{fb}_{iteration}_step_{step}.png')
+        fig_path = os.path.join(exp_path, 'trajectories', f'trajectories_{fb}_{iteration}_step_{step}.png')
         if not os.path.isfile(fig_path):
             im.save(fig_path)
     if tracker:
@@ -316,7 +323,7 @@ def visualize_trajectory_image(
     im = fig2img(fig)
 
     if exp_path is not None:
-        fig_path = os.path.join(exp_path, f'trajectories_{fb}_{iteration}_step_{step}.png')
+        fig_path = os.path.join(exp_path, 'trajectories', f'trajectories_{fb}_{iteration}_step_{step}.png')
         if not os.path.isfile(fig_path):
             im.save(fig_path)
     

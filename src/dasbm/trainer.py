@@ -187,10 +187,10 @@ class DiscreteSBMTrainer:
                 
             if self.step % self.eval_freq == 0:
                 self.accelerator.print(f'{fb.capitalize()} D-IMF iteration: {self.iteration}: kl_loss: {info["kl_loss"]}, ce_loss: {info["ce_loss"]}')
-                self.eval(fb=fb, dataloader=testloader, step=self.step)
+                self.viz(fb=fb, dataloader=testloader, step=self.step)
             self.accelerator.log(info, step=self.step)
         
-    def eval(
+    def viz(
         self,
         fb: Literal['forward', 'backward'],
         dataloader: DataLoader, 

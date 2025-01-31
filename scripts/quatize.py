@@ -4,7 +4,7 @@ import sys
 from omegaconf import OmegaConf
 import torch
 
-sys.path.append('./src')
+sys.path.append('../src')
 from dasbm.models.quantized_images import Codec
 from dasbm.data import CelebaDataset
 

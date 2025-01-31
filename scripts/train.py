@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 from omegaconf import OmegaConf
 
@@ -8,7 +9,7 @@ from accelerate.utils import set_seed
 set_seed(42)
 import torch
 
-sys.path.append('./src')
+sys.path.append('../src')
 from dasbm.data import (
     CelebaDataset,
     DiscreteGaussianDataset, 
@@ -48,6 +49,7 @@ if __name__ == '__main__':
     exp_name, exp_path = None, None
     if accelerator.is_main_process:
         exp_name, exp_path = create_expertiment(exp_dir, args)
+        OmegaConf.save(config=args, f=os.path.join(exp_path, 'config.yaml'))
     
     accelerator.init_trackers(
         project_name='Discrete SBM', 
@@ -55,7 +57,7 @@ if __name__ == '__main__':
         config=OmegaConf.to_object(args) # type: ignore
     )
     accelerator.print(f'Created experiment folder in {exp_path}.')
-    accelerator.print(f'Initializing experiment with:\n{OmegaConf.to_yaml(args)}')
+    accelerator.print(f'Initializing experiment with:\n{OmegaConf.to_yaml(args)}')    
 
     accelerator.print('Loading dataset...')
     with accelerator.main_process_first(): # Avoid creating dirs at the same time
@@ -66,10 +68,10 @@ if __name__ == '__main__':
             testset_x = DiscreteGaussianDataset(n_samples=n_samples, dim=args.data.dim, num_categories=args.data.num_categories, train=False)
             testset_y = DiscreteSwissRollDataset(n_samples=n_samples, num_categories=args.data.num_categories, train=False)
         elif args.data.type == 'images':
-            trainset_x = DiscreteColoredMNISTDataset(target_digit=2, data_dir=data_dir)
-            trainset_y = DiscreteColoredMNISTDataset(target_digit=3, data_dir=data_dir)
-            testset_x = DiscreteColoredMNISTDataset(target_digit=2, data_dir=data_dir, train=False)
-            testset_y = DiscreteColoredMNISTDataset(target_digit=3, data_dir=data_dir, train=False)
+            trainset_x = DiscreteColoredMNISTDataset(target_digit=3, data_dir=data_dir)
+            trainset_y = DiscreteColoredMNISTDataset(target_digit=2, data_dir=data_dir)
+            testset_x = DiscreteColoredMNISTDataset(target_digit=3, data_dir=data_dir, train=False)
+            testset_y = DiscreteColoredMNISTDataset(target_digit=2, data_dir=data_dir, train=False)
         elif args.data.type == 'quantized_images':
             # Train set is already quantized, so, we do not set size explicitly
             trainset_x = CelebaDataset(sex='male', data_dir=data_dir)

@@ -1,12 +1,14 @@
 **/.vscode
 **/.ipynb_checkpoints
+**/.virtual_documents
 **/data
 **/experiments
 **/runs
 **/__pycache__
 **/wandb
-**/*.sh
 **/*.ckpt
 **/*.pt
 **/*.pth
 **/*.zip
+**/notebooks
+**/checkpoints

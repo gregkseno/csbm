@@ -155,11 +155,12 @@ class CelebaDataset(BaseDataset):
         data_dir: str,
         size: Optional[int] = None, 
         train: bool = True,
-        return_names: bool = True
+        return_names: bool = False
     ):
         self.train = train
         self.size = size
         self.return_names = return_names
+        self.data_dir= data_dir
 
         attrs = pd.read_csv(os.path.join(data_dir, 'celeba', 'list_attr_celeba.csv'))
         if sex == 'male':
@@ -177,8 +178,8 @@ class CelebaDataset(BaseDataset):
             split = split[split['partition'] != 0]
             image_names = pd.merge(attrs, split, on=['image_id'], how='inner')
             sub_folder = 'raw'
-        image_names = image_names['image_id'].tolist()
-        self.dataset = [os.path.join(data_dir, 'celeba', 'img_align_celeba', sub_folder, image) for image in image_names]
+        self.image_names = image_names['image_id']
+        self.dataset = [os.path.join(data_dir, 'celeba', 'img_align_celeba', sub_folder, image) for image in self.image_names.tolist()]
 
     def __getitem__(self, index):
         if self.train:
@@ -198,6 +199,17 @@ class CelebaDataset(BaseDataset):
 
     def __len__(self):
         return len(self.dataset)
+    
+    def get_by_filename(self, index):
+        transform = transforms.Compose([
+                transforms.Resize((self.size, self.size)),
+                transforms.ToTensor(),
+        ])
+        # image = self.image_names[self.image_names == index].item()
+        image = Image.open(os.path.join(self.data_dir, 'celeba', 'img_align_celeba', 'raw', index))
+        image = image.convert('RGB')
+        image = transform(image)
+        return image
     
     def repeat(self, n: int, max_len: int):
         self.dataset = self.dataset * n
