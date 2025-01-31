@@ -21,7 +21,7 @@ from dasbm.utils import visualize, visualize_trajectory
 from dasbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 
 
-class DiscreteSBMTrainer:
+class СSBMTrainer:
     exp_type: Literal['toy', 'images', 'quantized_images']
     forward_and_backward = {'forward', 'backward'}
     checkpoint_path = 'EMPTY'

@@ -21,7 +21,7 @@ from dasbm.models.toy import D3PM
 from dasbm.models.images import ImageD3PM
 from dasbm.models.quantized_images import Codec, LatentD3PM
 from dasbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
-from dasbm.trainer import DiscreteSBMTrainer
+from dasbm.trainer import СSBMTrainer
 from dasbm.utils import create_expertiment
 
 
@@ -140,7 +140,7 @@ if __name__ == '__main__':
     )
     prior = prior.to(accelerator.device)
     
-    trainer = DiscreteSBMTrainer(
+    trainer = СSBMTrainer(
         iterations=args.train.iterations,
         inner_iterations=args.train.inner_iterations,
         prior_iterations=args.train.prior_iterations,

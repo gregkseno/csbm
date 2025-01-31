@@ -91,7 +91,7 @@ class CausalSelfAttention(nn.Module):
 
         # output projection
         y = self.resid_drop(self.proj(y))
-        return y, present   # TODO: check that this does not break anything
+        return y, present  
 
 
 class Block(nn.Module):
@@ -109,7 +109,6 @@ class Block(nn.Module):
         )
 
     def forward(self, x, layer_past=None, return_present=False):
-        # TODO: check that training still works
         if return_present: assert not self.training
         # layer past: tuple of length two with B, nh, T, hs
         attn, present = self.attn(self.ln1(x), layer_past=layer_past)

@@ -469,7 +469,7 @@ class Prior(nn.Module):
     def sample_bridge(self, x_start: torch.Tensor, x_end: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         r"""Samples from bridge $p(x_{t} | x_{0}, x_{1})$."""
         p_start_t = self.extract('cumulative', t, row_id=x_start)
-        p_t_end = self.extract('cumulative', self.num_timesteps + 1 - t, column_id=x_end) # TODO: убедиться что это корректно
+        p_t_end = self.extract('cumulative', self.num_timesteps + 1 - t, column_id=x_end)
         log_probs = torch.log(p_start_t + self.eps) + torch.log(p_t_end + self.eps)
         log_probs = log_probs - log_probs.logsumexp(dim=-1, keepdim=True)
         
