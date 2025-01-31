@@ -111,5 +111,6 @@ exp_path/checkpoints/{forward_or_backward}_{iteration}/generations
 ```
 
 To calculate FID and CMMD, use any available implementations, such as:
+
 - [pytorch-fid](https://github.com/mseitzer/pytorch-fid)
 - [cmmd-pytorch](https://github.com/sayakpaul/cmmd-pytorch)
