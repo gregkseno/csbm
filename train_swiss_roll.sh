@@ -1,10 +1,10 @@
 accelerate launch \
-    --num_processes=2 \
+    --num_processes=1 \
     --num_machines=1 \
     --mixed_precision='no' \
     --dynamo_backend='no' \
-    --main_process_port=32883 \
+    --main_process_port=29004 \
     scripts/train.py \
-        --config './configs/images.yaml' \
+        --config './configs/swiss_roll.yaml' \
         --exp_dir './experiments' \
         --data_dir './data'

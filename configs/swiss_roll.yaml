@@ -1,5 +1,6 @@
 data:
   type: toy # choices: "toy", "images", "quantized_images"
+  dataset: swiss_roll
   dim: 2
   num_categories: 50
   num_timesteps: 10

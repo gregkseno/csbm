@@ -1,10 +1,10 @@
 accelerate launch \
-    --num_processes=4 \
+    --num_processes=2 \
     --num_machines=1 \
     --mixed_precision='no' \
     --dynamo_backend='no' \
-    --main_process_port=32884 \
+    --main_process_port=32883 \
     scripts/train.py \
-        --config './configs/quantized_images.yaml' \
+        --config './configs/cmnist.yaml' \
         --exp_dir './experiments' \
         --data_dir './data'

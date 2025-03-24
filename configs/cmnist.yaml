@@ -1,5 +1,6 @@
 data:
   type: images # choices: "toy", "images", "quantized_images"
+  dataset: cmnist
   dim: 32
   num_categories: 256
   num_timesteps: 25

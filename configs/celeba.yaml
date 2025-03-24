@@ -1,11 +1,13 @@
 data:
   type: quantized_images # choices: "toy", "images", "quantized_images"
+  dataset: celeba
   dim: 128
   latent_dim: 16
   num_categories: 1024
   num_timesteps: 100
   num_skip_steps: 1
   coupling_type: independent # choices: "independent", "prior"
+  train_test_split: 0.9
 model:
   hidden_dim: 256
   num_channels: 4
@@ -13,10 +15,10 @@ model:
   num_att_heads: 16
   dropout: 0
 codec:
-  ckpt_path: checkpoints/vqgan_celeba_f8_1024.ckpt
+  ckpt_path: checkpoints/vqgan_celeba_f8_1024_new.ckpt
   config_path: configs/vqgan_celeba_f8_1024.yaml
 prior:
-  alpha: 0.1
+  alpha: 0.005
   type: uniform # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"
 train:
   batch_size: 32
@@ -44,4 +46,4 @@ eval:
   freq: 1000
   num_samples: 25
   num_trajectories: 4 # How many trajecotries
-  num_translations: 1 # How many times sample trajecotry from single point
+  num_translations: 2 # How many times sample trajecotry from single point
