@@ -9,8 +9,9 @@ from accelerate.utils import set_seed
 set_seed(42)
 import torch
 
-sys.path.append('../src')
+sys.path.append('src')
 from csbm.data import (
+    AFHQDataset,
     CelebaDataset,
     DiscreteGaussianDataset, 
     DiscreteSwissRollDataset, 
@@ -35,16 +36,11 @@ if __name__ == '__main__':
     data_dir = args.data_dir
     args = OmegaConf.load(args.config)
 
-    # profile_kwargs = ProfileKwargs(
-    #     activities=["cpu", "cuda"],
-    #     record_shapes=True
-    # )
     accelerator = Accelerator(
         log_with="wandb", 
         cpu=False, 
         gradient_accumulation_steps=args.train.gradient_accumulation_steps
-    ) # , kwargs_handlers=[profile_kwargs])
-    set_seed(42)
+    )
     
     exp_name, exp_path = None, None
     if accelerator.is_main_process:
@@ -61,23 +57,28 @@ if __name__ == '__main__':
 
     accelerator.print('Loading dataset...')
     with accelerator.main_process_first(): # Avoid creating dirs at the same time
-        if args.data.type == 'toy':
+        if args.data.dataset == 'swiss_roll':
             n_samples = args.train.batch_size * args.train.inner_iterations
             trainset_x = DiscreteGaussianDataset(n_samples=n_samples, dim=args.data.dim, num_categories=args.data.num_categories)
             trainset_y = DiscreteSwissRollDataset(n_samples=n_samples, num_categories=args.data.num_categories)
             testset_x = DiscreteGaussianDataset(n_samples=n_samples, dim=args.data.dim, num_categories=args.data.num_categories, train=False)
             testset_y = DiscreteSwissRollDataset(n_samples=n_samples, num_categories=args.data.num_categories, train=False)
-        elif args.data.type == 'images':
+        elif args.data.dataset == 'cmnist':
             trainset_x = DiscreteColoredMNISTDataset(target_digit=3, data_dir=data_dir)
             trainset_y = DiscreteColoredMNISTDataset(target_digit=2, data_dir=data_dir)
             testset_x = DiscreteColoredMNISTDataset(target_digit=3, data_dir=data_dir, train=False)
             testset_y = DiscreteColoredMNISTDataset(target_digit=2, data_dir=data_dir, train=False)
-        elif args.data.type == 'quantized_images':
             # Train set is already quantized, so, we do not set size explicitly
-            trainset_x = CelebaDataset(sex='male', data_dir=data_dir)
-            trainset_y = CelebaDataset(sex='female', data_dir=data_dir)
-            testset_x = CelebaDataset(sex='male', size=args.data.dim, data_dir=data_dir, train=False)
-            testset_y = CelebaDataset(sex='female', size=args.data.dim, data_dir=data_dir, train=False)
+        elif args.data.dataset == 'celeba':
+            trainset_x = CelebaDataset(sex='male', size=args.data.dim, data_dir=data_dir, split=args.data.train_test_split)
+            trainset_y = CelebaDataset(sex='female', size=args.data.dim, data_dir=data_dir, split=args.data.train_test_split)
+            testset_x = CelebaDataset(sex='male', use_quantized=False, size=args.data.dim, data_dir=data_dir, train=False, split=args.data.train_test_split)
+            testset_y = CelebaDataset(sex='female', use_quantized=False, size=args.data.dim, data_dir=data_dir, train=False, split=args.data.train_test_split)
+        elif args.data.dataset == 'afhq':
+            trainset_x = AFHQDataset(animal_type='cat', size=args.data.dim, data_dir=data_dir)
+            trainset_y = AFHQDataset(animal_type='wild', size=args.data.dim, data_dir=data_dir)
+            testset_x = AFHQDataset(animal_type='cat', use_quantized=False, size=args.data.dim, data_dir=data_dir, train=False)
+            testset_y = AFHQDataset(animal_type='wild', use_quantized=False, size=args.data.dim, data_dir=data_dir, train=False)
         else:
             raise NotImplementedError(f"Unknown exp type {args.data.type}!")
 
@@ -117,8 +118,6 @@ if __name__ == '__main__':
         num_timesteps=args.data.num_timesteps,
         **OmegaConf.to_object(args.model) # type: ignore
     )
-    # torch.compile(forward_model)
-    # torch.compile(backward_model)
 
     forward_optimizer = torch.optim.AdamW(forward_model.parameters(), **args.train.optimizer) # type: ignore
     backward_optimizer = torch.optim.AdamW(backward_model.parameters(), **args.train.optimizer) # type: ignore

@@ -4,9 +4,9 @@ import sys
 from omegaconf import OmegaConf
 import torch
 
-sys.path.append('../src')
+sys.path.append('src')
 from csbm.models.quantized_images import Codec
-from csbm.data import CelebaDataset
+from csbm.data import CelebaDataset, AFHQDataset
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -26,4 +26,9 @@ if __name__ == '__main__':
     ).to(device)
 
     print('Start quantization...')
-    CelebaDataset.quantize_train(codec, data_dir, args.data.dim, args.train.batch_size)
+    if args.data.dataset == 'celeba':
+        CelebaDataset.quantize_train(codec, data_dir, args.data.dim, args.train.batch_size)
+    elif args.data.dataset == 'afhq':
+        AFHQDataset.quantize_train(codec, data_dir, args.data.dim, args.train.batch_size)
+    else:
+        raise ValueError(f'Unknown dataset {args.data.dataset}!')   

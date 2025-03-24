@@ -40,7 +40,7 @@ class Codec(nn.Module):
         z_q = self.model.quantize.get_codebook_entry(cats, shape)
         images = self.model.decode(z_q)
         images = torch.clamp(images, -1., 1.)
-        images = (images + 1.)/2.
+        images = (images + 1.) / 2.
         return images
     
     @property
