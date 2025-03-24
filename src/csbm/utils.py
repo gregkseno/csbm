@@ -28,12 +28,12 @@ def create_expertiment(exp_dir: str, hyperparams: DictConfig | ListConfig) -> Tu
     time = datetime.now().strftime("%d.%m.%y_%H:%M:%S")
     
     save_dir_name = os.path.join(
-        exp_dir, hyperparams.data.type, prior, dim_alpha + '_' + time
+        exp_dir, hyperparams.data.type, hyperparams.data.dataset, prior, dim_alpha + '_' + time
     )
     os.makedirs(os.path.join(save_dir_name, 'checkpoints'), exist_ok=True)
     os.makedirs(os.path.join(save_dir_name, 'samples'), exist_ok=True)
     os.makedirs(os.path.join(save_dir_name, 'trajectories'), exist_ok=True)
-    return '_'.join([hyperparams.data.type, prior, dim_alpha]), save_dir_name
+    return '_'.join([hyperparams.data.type, hyperparams.data.dataset, prior, dim_alpha]), save_dir_name
 
 def fig2img(fig: Figure) -> Image.Image:
     fig.canvas.draw()
@@ -298,18 +298,9 @@ def visualize_trajectory_image(
     fig, ax = plt.subplots(1, 1, figsize=figsize)
       
     # Sampling
-    num_timesteps = trajectories.shape[0]
-    trajectories = torch.stack([
-            trajectories[0], 
-            trajectories[num_timesteps // 8], 
-            trajectories[num_timesteps // 2], 
-            trajectories[(num_timesteps * 7) // 8], 
-            trajectories[-1]
-        ], dim=0
-    )
-    num_timesteps, batch_size = trajectories.shape[:2]
-    trajectories = trajectories.reshape(num_timesteps * batch_size, *trajectories.shape[2:])
-    trajectories = convert_to_numpy(make_grid(trajectories, nrow=batch_size))
+    batch_size = trajectories.shape[1]
+    trajectories = trajectories.reshape(-1, *trajectories.shape[2:])
+    trajectories = convert_to_numpy(make_grid(convert_to_torch(trajectories), nrow=batch_size))
 
     ax.imshow(trajectories.transpose(1, 2, 0)) 
     if iteration is not None:
