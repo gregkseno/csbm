@@ -82,20 +82,21 @@ if __name__ == '__main__':
         else:
             raise NotImplementedError(f"Unknown exp type {args.data.type}!")
 
-    prior = Prior(
-        alpha=args.prior.alpha, 
-        num_categories=args.data.num_categories, 
-        num_timesteps=args.data.num_timesteps, 
-        num_skip_steps=args.data.num_skip_steps, 
-        prior_type=args.prior.type
-    )
-    
     codec = None
     if args.data.type == 'quantized_images':
         codec = Codec(
             config_path=args.codec.config_path,
             ckpt_path=args.codec.ckpt_path,     
         )
+
+    prior = Prior(
+        alpha=args.prior.alpha, 
+        num_categories=args.data.num_categories, 
+        num_timesteps=args.data.num_timesteps, 
+        num_skip_steps=args.data.num_skip_steps, 
+        prior_type=args.prior.type,
+        centroids=codec.centroids if codec is not None and args.prior.type == 'centroid_gaussian' else None
+    )
 
     if args.data.type == 'toy':
         model_class = D3PM

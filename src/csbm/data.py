@@ -538,7 +538,7 @@ class Prior(nn.Module):
         self.num_timesteps = num_timesteps
         self.num_skip_steps = num_skip_steps
         self.eps = 1e-6
-
+        self.prior_type = prior_type
         if prior_type == 'gaussian':
             p_onestep, p_cum = gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps)
         elif prior_type == 'von_mises':

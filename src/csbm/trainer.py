@@ -370,6 +370,9 @@ class СSBMTrainer:
 
     def _get_map(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         a, b = ot.unif(x.shape[0]), ot.unif(y.shape[0])
+        if self.codec is not None and self.prior.prior_type == 'centoid_gaussian':
+            x = self.codec.centroids[x.long()]
+            y = self.codec.centroids[y.long()]
         if x.dim() > 2:
             x = x.reshape(x.shape[0], -1)
         if y.dim() > 2:
