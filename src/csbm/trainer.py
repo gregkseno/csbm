@@ -11,6 +11,7 @@ import torch
 from torch.optim import Optimizer # type: ignore
 from torch.utils.data import DataLoader, RandomSampler
 from torch_ema import ExponentialMovingAverage as EMA
+from torchmetrics.image.fid import FrechetInceptionDistance as FID
 
 from csbm.models.quantized_images import LatentD3PM, Codec
 from csbm.models.toy import D3PM
@@ -88,6 +89,18 @@ class СSBMTrainer:
         if exp_path is not None:
             self.checkpoint_path = os.path.join(exp_path, 'checkpoints')            
 
+        self.fids = {
+            'forward': FID(
+                feature=2048, 
+                reset_real_features=False, 
+                normalize=(exp_type == 'quantized_images')
+            ).to(self.accelerator.device),
+            'backward': FID(
+                feature=2048, 
+                reset_real_features=False, 
+                normalize=(exp_type == 'quantized_images')
+            ).to(self.accelerator.device)
+        }
         self.eval_freq = eval_freq
         self.num_trajectories = num_trajectories
         self.num_translations = num_translations
@@ -188,6 +201,8 @@ class СSBMTrainer:
             if self.step % self.eval_freq == 0:
                 self.accelerator.print(f'{fb.capitalize()} D-IMF iteration: {self.iteration}: kl_loss: {info["kl_loss"]}, ce_loss: {info["ce_loss"]}')
                 self.viz(fb=fb, dataloader=testloader, step=self.step)
+            if self.step % (self.eval_freq * 5) == 0:
+                self.eval(fb=fb, dataloader=testloader, step=self.step)
             self.accelerator.log(info, step=self.step)
         
     def viz(
@@ -196,9 +211,7 @@ class СSBMTrainer:
         dataloader: DataLoader, 
         step: Optional[int]
     ):
-        self.accelerator.print('Evaluating...')
         self.models[fb].eval()
-
         with self.emas[fb].average_parameters():
             test_x_start, test_x_end = next(iter(dataloader))
 
@@ -219,9 +232,20 @@ class СSBMTrainer:
             trajectories = trajectories.to(self.accelerator.device)
             trajectories = self.models[fb].sample_trajectory(trajectories, self.prior)
 
+            # Reduce number of timesteps for visualization
+            num_timesteps = trajectories.shape[0]
+            trajectories = torch.stack([
+                trajectories[0], 
+                trajectories[num_timesteps // 8], 
+                trajectories[num_timesteps // 2], 
+                trajectories[(num_timesteps * 7) // 8], 
+                trajectories[-1]
+            ], dim=0
+            )
+
             if self.codec is not None:
                 trajectories = self.codec.decode_to_image(trajectories.reshape(-1, *traj_start.shape[1:]))
-                trajectories = trajectories.reshape(-1, self.num_trajectories, *pred_x_start.shape[1:])
+                trajectories = trajectories.reshape(-1, self.num_trajectories * self.num_translations, *pred_x_start.shape[1:])
 
             visualize(
                 exp_type=self.exp_type, 
@@ -244,7 +268,35 @@ class СSBMTrainer:
                 step=step,
                 tracker=self.accelerator.get_tracker("wandb")
             )
-        self.accelerator.print('Done evaluating!')
+
+
+    def eval(
+        self,
+        fb: Literal['forward', 'backward'],
+        dataloader: DataLoader,
+        step: Optional[int]
+    ):
+        self.fids[fb].reset()
+        self.models[fb].eval()
+
+        trange = tqdm(
+            dataloader, 
+            desc=f'{fb.capitalize()} D-IMF evaluation: {self.iteration}', 
+            file=sys.stdout, 
+            disable=not self.accelerator.is_local_main_process
+        )
+        with self.emas[fb].average_parameters():
+            for test_x_start, test_x_end in trange:
+                if self.codec is not None:
+                    encoded_test_x_end = self.codec.encode_to_cats(test_x_end)
+                    pred_x_start = self.models[fb].sample(encoded_test_x_end, self.prior)
+                    pred_x_start = self.codec.decode_to_image(pred_x_start)
+                else:
+                    pred_x_start = self.models[fb].sample(test_x_end, self.prior)
+                self.fids[fb].update(test_x_start, real=True)
+                self.fids[fb].update(pred_x_start, real=False)
+
+        self.accelerator.log({f'{fb}_fid': self.fids[fb].compute().detach()}, step=step)
 
 
     def train(
