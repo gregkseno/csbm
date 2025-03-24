@@ -71,6 +71,7 @@ class DiscreteSwissRollDataset(BaseDataset):
             n_samples=n_samples,
             noise=noise
         )[0][:, [0, 2]]
+        dataset = (dataset - dataset.mean()) / dataset.std()
         dataset = self.continuous_to_discrete(dataset, num_categories)
         if not train:
             dataset[:4] = torch.tensor([[25, 25], [46, 4], [6, 44], [49, 49]])
@@ -437,7 +438,7 @@ def von_mises_prior(
 
     for i, current_angle in enumerate(angles):
         for j, next_angle in enumerate(angles):
-            p_onestep_mats[i, j] = np.exp((1 / alpha) * np.cos(next_angle - current_angle))
+            p_onestep_mats[i, j] = np.exp((1 / (alpha**2 * (num_categories - 1)**2)) * np.cos(next_angle - current_angle))
         p_onestep_mats[i] /= np.sum(p_onestep_mats[i])
     p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
 
@@ -452,28 +453,32 @@ def gaussian_prior(
     alpha: float,
     num_categories: int, 
     num_timesteps: int, 
-    num_skip_steps: int
+    num_skip_steps: int,
+    use_doubly_stochastic: bool = True
 ):
     p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float64)
-    # indices = np.arange(num_categories)[None, ...]
-    # values = -4 * (indices - indices.T)**2 / (alpha**2 * (num_categories - 1)**2)
-    # p_onestep_mats = softmax(values, axis=1)
-    norm_const = -4 * np.arange(
-        start=-(num_categories-1), 
-        stop=(num_categories+1), 
-        step=1, 
-        dtype=np.float64
-    ) ** 2
-    norm_const /= (alpha**2 * (num_categories - 1)**2)
-    for i in range(num_categories):
-        for j in range(num_categories):
-            if i == j:
-                continue
-            value = -(4 * (i - j)** 2) / (alpha**2 * (num_categories - 1)**2)
-            p_onestep_mats[i][j] = np.exp(value) / np.exp(norm_const).sum()
+    indices = np.arange(num_categories)[None, ...]
+    values = -4 * (indices - indices.T)**2 / (alpha**2 * (num_categories - 1)**2)
 
-    for i in range(num_categories):
-        p_onestep_mats[i][i] = 1 - p_onestep_mats[i].sum() 
+    if use_doubly_stochastic:
+        p_onestep_mats = softmax(values, axis=1)
+    else:
+        norm_const = -4 * np.arange(
+            start=-(num_categories-1), 
+            stop=(num_categories+1), 
+            step=1, 
+            dtype=np.float64
+        ) ** 2
+        norm_const /= (alpha**2 * (num_categories - 1)**2)
+        for i in range(num_categories):
+            for j in range(num_categories):
+                if i == j:
+                    continue
+                value = -(4 * (i - j)** 2) / (alpha**2 * (num_categories - 1)**2)
+                p_onestep_mats[i][j] = np.exp(value) / np.exp(norm_const).sum()
+
+        for i in range(num_categories):
+            p_onestep_mats[i][i] = 1 - p_onestep_mats[i].sum() 
     p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
 
     p_onestep_mats = torch.from_numpy(p_onestep_mats) # .softmax(dim=1)
@@ -492,21 +497,7 @@ def centroid_gaussian_prior(
 ):
     centroids = convert_to_numpy(centroids)
     distances = cdist(centroids, centroids, metric='euclidean')  # num_categories x num_categories
-    p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float64)
-    norm_const = np.array([
-        np.exp(-4 * (distances[i, :]**2) / (alpha**2)).sum()
-        for i in range(-(num_categories-1), num_categories-1, 1)
-    ])
-
-    for i in range(num_categories):
-        for j in range(num_categories):
-            if i == j:
-                continue
-            value = -4 * (distances[i, j]**2) / (alpha**2)
-            p_onestep_mats[i][j] = np.exp(value) / norm_const[i]
-
-    for i in range(num_categories):
-        p_onestep_mats[i][i] = 1 - p_onestep_mats[i].sum()
+    p_onestep_mats = softmax(-distances / (alpha**2 * (num_categories - 1)**2), axis=1)
     p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
 
     p_onestep_mats = torch.from_numpy(p_onestep_mats) # .softmax(dim=1)

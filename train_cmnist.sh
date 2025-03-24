@@ -1,3 +1,16 @@
+#!/bin/bash
+#SBATCH --job-name=train-cmnist
+#SBATCH --partition=ais-gpu
+#SBATCH --error=runs/train-cmnist-%j.err
+#SBATCH --output=runs/train-cmnist-%j.log
+#SBATCH --gpus=2
+#SBATCH --cpus-per-task=12
+#SBATCH --mem=30G
+#SBATCH --ntasks=1
+#SBATCH --nodes=1
+#SBATCH --time=16-00:00:00
+
+source activate csbm
 accelerate launch \
     --num_processes=2 \
     --num_machines=1 \
