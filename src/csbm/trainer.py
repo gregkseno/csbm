@@ -201,7 +201,7 @@ class СSBMTrainer:
             if self.step % self.eval_freq == 0:
                 self.accelerator.print(f'{fb.capitalize()} D-IMF iteration: {self.iteration}: kl_loss: {info["kl_loss"]}, ce_loss: {info["ce_loss"]}')
                 self.viz(fb=fb, dataloader=testloader, step=self.step)
-            if self.step % (self.eval_freq * 5) == 0:
+            if self.step % (self.eval_freq * 5) == 0 and self.exp_type != 'toy':
                 self.eval(fb=fb, dataloader=testloader, step=self.step)
             self.accelerator.log(info, step=self.step)
         
