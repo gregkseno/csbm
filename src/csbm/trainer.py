@@ -89,16 +89,17 @@ class СSBMTrainer:
         if exp_path is not None:
             self.checkpoint_path = os.path.join(exp_path, 'checkpoints')            
 
+        self.is_generation_normalized = (exp_type == 'quantized_images')
         self.fids = {
             'forward': FID(
                 feature=2048, 
                 reset_real_features=False, 
-                normalize=(exp_type == 'quantized_images')
+                normalize=self.is_generation_normalized
             ).to(self.accelerator.device),
             'backward': FID(
                 feature=2048, 
                 reset_real_features=False, 
-                normalize=(exp_type == 'quantized_images')
+                normalize=self.is_generation_normalized
             ).to(self.accelerator.device)
         }
         self.eval_freq = eval_freq
@@ -287,6 +288,8 @@ class СSBMTrainer:
         )
         with self.emas[fb].average_parameters():
             for test_x_start, test_x_end in trange:
+                if not self.is_generation_normalized:
+                    test_x_start = test_x_start.to(dtype=torch.uint8)
                 if self.codec is not None:
                     encoded_test_x_end = self.codec.encode_to_cats(test_x_end)
                     pred_x_start = self.models[fb].sample(encoded_test_x_end, self.prior)
