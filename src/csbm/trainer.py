@@ -288,14 +288,17 @@ class СSBMTrainer:
         )
         with self.emas[fb].average_parameters():
             for test_x_start, test_x_end in trange:
-                if not self.is_generation_normalized:
-                    test_x_start = test_x_start.to(dtype=torch.uint8)
                 if self.codec is not None:
                     encoded_test_x_end = self.codec.encode_to_cats(test_x_end)
                     pred_x_start = self.models[fb].sample(encoded_test_x_end, self.prior)
                     pred_x_start = self.codec.decode_to_image(pred_x_start)
                 else:
                     pred_x_start = self.models[fb].sample(test_x_end, self.prior)
+
+                if not self.is_generation_normalized:
+                    test_x_start = test_x_start.to(dtype=torch.uint8)
+                    pred_x_start = pred_x_start.to(dtype=torch.uint8)
+                    
                 self.fids[fb].update(test_x_start, real=True)
                 self.fids[fb].update(pred_x_start, real=False)
 

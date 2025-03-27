@@ -85,7 +85,7 @@ class D3PM(nn.Module):
         for t in reversed(range(1, self.num_timesteps + 2)):
             t = torch.tensor([t] * x.shape[0], device=self.device)
             x = self.markov_sample(x, t, prior)
-        return x.to(dtype=torch.uint8)
+        return x
     
     @torch.no_grad()
     def sample_trajectory(self, x: torch.Tensor, prior: Prior) -> torch.Tensor:
