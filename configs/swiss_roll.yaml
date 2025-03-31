@@ -15,7 +15,7 @@ prior:
 train:
   batch_size: 512
   gradient_accumulation_steps: 1
-  iterations: 10
+  iterations: 20
   prior_iterations: 10
   inner_iterations: 20000
   use_mini_batch: false

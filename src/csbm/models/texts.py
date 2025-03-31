@@ -343,25 +343,25 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     self.config = config
     self.vocab_size = vocab_size
 
-    self.vocab_embed = EmbeddingLayer(config.model.hidden_size,
+    self.vocab_embed = EmbeddingLayer(config.hidden_size,
                                       vocab_size)
-    self.sigma_map = TimestepEmbedder(config.model.cond_dim)
+    self.sigma_map = TimestepEmbedder(config.cond_dim)
     self.rotary_emb = Rotary(
-      config.model.hidden_size // config.model.n_heads)
+      config.hidden_size // config.n_heads)
 
     blocks = []
-    for _ in range(config.model.n_blocks):
-      blocks.append(DDiTBlock(config.model.hidden_size,
-                              config.model.n_heads,
-                              config.model.cond_dim,
-                              dropout=config.model.dropout))
+    for _ in range(config.n_blocks):
+      blocks.append(DDiTBlock(config.hidden_size,
+                              config.n_heads,
+                              config.cond_dim,
+                              dropout=config.dropout))
     self.blocks = nn.ModuleList(blocks)
 
     self.output_layer = DDitFinalLayer(
-      config.model.hidden_size,
+      config.hidden_size,
       vocab_size,
-      config.model.cond_dim)
-    self.scale_by_sigma = config.model.scale_by_sigma
+      config.cond_dim)
+    self.scale_by_sigma = config.scale_by_sigma
 
   def _get_bias_dropout_scale(self):
     if self.training:

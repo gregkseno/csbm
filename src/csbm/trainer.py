@@ -20,7 +20,7 @@ from csbm.models.images import ImageD3PM
 from csbm.models.texts import TextD3PM
 
 from csbm.data import BaseDataset, CouplingDataset, Prior
-from csbm.metrics import FID, ClassifierAccuracy, BLEUScore
+from csbm.metrics import FID, BLEUScore # ClassifierAccuracy
 from csbm.utils import visualize, visualize_trajectory
 from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 
@@ -112,10 +112,10 @@ class СSBMTrainer:
                 ).to(self.accelerator.device)
             }
         elif exp_type == 'texts':
-            self.accuracy = {
-                'forward': ClassifierAccuracy(fb='forward').to(self.accelerator.device),
-                'backward': ClassifierAccuracy(fb='backward').to(self.accelerator.device)
-            }
+            # self.accuracy = {
+            #     'forward': ClassifierAccuracy(fb='forward').to(self.accelerator.device),
+            #     'backward': ClassifierAccuracy(fb='backward').to(self.accelerator.device)
+            # }
             self.bleu = {
                 'forward': BLEUScore(),
                 'backward': BLEUScore()
@@ -317,7 +317,7 @@ class СSBMTrainer:
         if self.exp_type == 'quantized_images' or self.exp_type == 'images':
             self.fids[fb].reset()
         elif self.exp_type == 'texts':
-            self.accuracy[fb].reset()
+            # self.accuracy[fb].reset()
             self.bleu[fb].reset()
         else:
             raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
@@ -347,7 +347,7 @@ class СSBMTrainer:
                 elif self.exp_type == 'texts' and self.tokenizer is not None:
                     pred_x_start = self.tokenizer.decode(pred_x_start.numpy()) 
                     test_x_start = self.tokenizer.decode(test_x_start.numpy())
-                    self.accuracy[fb].update(pred_x_start)
+                    # self.accuracy[fb].update(pred_x_start)
                     self.bleu[fb].update(pred_x_start, test_x_start)
                 else:
                     raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
@@ -356,7 +356,7 @@ class СSBMTrainer:
             self.accelerator.log({f'{fb}_fid': self.fids[fb].compute().detach()}, step=step)
         elif self.exp_type == 'texts':
             self.accelerator.log(
-                {f'{fb}_accuracy': self.accuracy[fb].compute().detach(), 
+                {#f'{fb}_accuracy': self.accuracy[fb].compute().detach(), 
                  f'{fb}_bleu': self.bleu[fb].compute().detach()}, 
                 step=step
             )

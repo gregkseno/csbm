@@ -6,7 +6,7 @@
 #SBATCH --output=runs/train-yelp-%j.log
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=12
-#SBATCH --mem=100G
+#SBATCH --mem=200G
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --time=16-00:00:00
