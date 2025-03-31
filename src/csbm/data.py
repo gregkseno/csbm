@@ -473,7 +473,7 @@ def uniform_prior(
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats.transpose(1, 2), p_cum_mats
+    return p_onestep_mats[0].transpose(0, 1), p_cum_mats
 
 def von_mises_prior(
     alpha: float,
@@ -495,20 +495,20 @@ def von_mises_prior(
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats.transpose(1, 2), p_cum_mats
+    return p_onestep_mats[0].transpose(0, 1), p_cum_mats
 
 def gaussian_prior(
     alpha: float,
     num_categories: int, 
     num_timesteps: int, 
     num_skip_steps: int,
-    use_doubly_stochastic: bool = True
+    use_doubly_stochastic: bool = False
 ):
     p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float64)
     indices = np.arange(num_categories)[None, ...]
     values = -4 * (indices - indices.T)**2 / (alpha**2 * (num_categories - 1)**2)
 
-    if use_doubly_stochastic:
+    if not use_doubly_stochastic:
         p_onestep_mats = softmax(values, axis=1)
     else:
         norm_const = -4 * np.arange(
@@ -534,7 +534,7 @@ def gaussian_prior(
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats.transpose(1, 2), p_cum_mats
+    return p_onestep_mats[0].transpose(0, 1), p_cum_mats
 
 def centroid_gaussian_prior(
     alpha: float,
@@ -608,28 +608,29 @@ class Prior(nn.Module):
         row_id: Optional[torch.Tensor] = None,
         column_id: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        """Extracts row/column/element from transition matrix."""        
+        """Extracts row/column/element from transition matrix."""     
         if row_id is not None and column_id is not None:
             if mat_type  == 'onestep':
-                return self.p_onestep[row_id, column_id].unsqueeze(-1)
+                return self.p_onestep[row_id, column_id]
             else: 
                 t = broadcast(t, row_id.dim() - 1)
-                return self.p_cum[t, row_id, column_id].unsqueeze(-1)
+                return self.p_cum[t, row_id, column_id]
             
-        if row_id is not None and column_id is None:
+        elif row_id is not None and column_id is None:
             if mat_type  == 'onestep':
                 return self.p_onestep[row_id]
             else: 
                 t = broadcast(t, row_id.dim() - 1)
-                self.p_cum[t, row_id]
+                return self.p_cum[t, row_id]
         
-        if row_id is None and column_id is not None:
+        elif row_id is None and column_id is not None:
             if mat_type  == 'onestep':
                 return self.p_onestep[:, column_id]
             else:
                 t = broadcast(t, column_id.dim() - 1)
                 return self.p_cum[t, :, column_id]
-        raise ValueError('x_start and x_end cannot be None both!')
+        else:   
+            raise ValueError('x_start and x_end cannot be None both!')
 
     def sample_bridge(self, x_start: torch.Tensor, x_end: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         r"""Samples from bridge $p(x_{t} | x_{0}, x_{1})$."""
