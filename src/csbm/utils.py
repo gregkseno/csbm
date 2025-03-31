@@ -58,7 +58,7 @@ def broadcast(t: torch.Tensor, num_add_dims: int) -> torch.Tensor:
     return t.reshape(shape)
 
 def visualize(
-    exp_type: Literal['toy', 'images', 'quantized_images'],
+    exp_type: Literal['toy', 'images', 'quantized_images', 'texts'],
     x_end: Any, 
     x_start: Any, 
     pred_x_start: Any, 
@@ -180,7 +180,7 @@ def visualize_images(
 
 
 def visualize_trajectory(
-    exp_type: Literal['toy', 'images', 'quantized_images'],
+    exp_type: Literal['toy', 'images', 'quantized_images', 'texts'],
     pred_x_start: torch.Tensor | np.ndarray, 
     trajectories: torch.Tensor | np.ndarray, 
     fb: Literal['forward', 'backward'],

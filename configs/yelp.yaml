@@ -1,23 +1,16 @@
 data:
-  type: quantized_images # choices: "toy", "images", "quantized_images", "texts"
-  dataset: afhq
-  dim: 512
-  latent_dim: 16
-  num_categories: 256
+  type: texts # choices: "toy", "images", "quantized_images", "texts"
+  dataset: yelp
+  dim: 128
+  num_categories: 8096
   num_timesteps: 100
   num_skip_steps: 1
   coupling_type: independent # choices: "independent", "prior"
-model:
-  hidden_dim: 256
-  num_channels: 4
-  num_layers: 18
-  num_att_heads: 16
-  dropout: 0
-codec:
-  ckpt_path: checkpoints/vqgan_afhq_f32_256.ckpt
-  config_path: configs/vqgan_afhq_f32_256.yaml
+  train_test_split: 0.9
+model: # TODO
+tokenizer: # TODO
 prior:
-  alpha: 0.01
+  alpha: 0.002
   type: uniform # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"
 train:
   batch_size: 32
@@ -25,7 +18,7 @@ train:
   iterations: 20
   prior_iterations: 20
   inner_iterations: 20000
-  use_mini_batch: false
+  use_mini_batch: true
   ce_loss_coeff: 0.001
   kl_loss_coeff: 1
   ema_decay: 0.999
@@ -43,6 +36,6 @@ train:
   #     warmup: 10000
 eval:
   freq: 1000
-  num_samples: 16
-  num_trajectories: 4 # How many trajecotries
-  num_translations: 2 # How many times sample trajecotry from single point
+  num_samples: 1 # Want to sample 1 text
+  num_trajectories: 1 # Does not work for text
+  num_translations: 1 # Does not work for text

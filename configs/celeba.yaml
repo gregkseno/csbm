@@ -1,5 +1,5 @@
 data:
-  type: quantized_images # choices: "toy", "images", "quantized_images"
+  type: quantized_images # choices: "toy", "images", "quantized_images", "texts"
   dataset: celeba
   dim: 128
   latent_dim: 16
@@ -18,7 +18,7 @@ codec:
   ckpt_path: checkpoints/vqgan_celeba_f8_1024_new.ckpt
   config_path: configs/vqgan_celeba_f8_1024.yaml
 prior:
-  alpha: 0.005
+  alpha: 0.002
   type: centroid_gaussian # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"
 train:
   batch_size: 32

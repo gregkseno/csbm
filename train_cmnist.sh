@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=train-cmnist
 #SBATCH --partition=ais-gpu
+#SBATCH --reservation=HPC-2507
 #SBATCH --error=runs/train-cmnist-%j.err
 #SBATCH --output=runs/train-cmnist-%j.log
 #SBATCH --gpus=2

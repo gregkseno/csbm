@@ -8,22 +8,24 @@ from accelerate import Accelerator
 import numpy as np
 import ot
 import torch
+from torch.nn import functional as F
 from torch.optim import Optimizer # type: ignore
 from torch.utils.data import DataLoader, RandomSampler
 from torch_ema import ExponentialMovingAverage as EMA
-from torchmetrics.image.fid import FrechetInceptionDistance as FID
 
 from csbm.models.quantized_images import LatentD3PM, Codec
 from csbm.models.toy import D3PM
 from csbm.models.images import ImageD3PM
+from csbm.models.texts import TextD3PM
 
-from csbm.data import BaseDataset, CouplingDataset, Prior
+from csbm.data import BaseDataset, CouplingDataset, Prior, Tokenizer
+from csbm.metrics import FID, ClassifierAccuracy, BLEUScore
 from csbm.utils import visualize, visualize_trajectory
 from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 
 
 class СSBMTrainer:
-    exp_type: Literal['toy', 'images', 'quantized_images']
+    exp_type: Literal['toy', 'images', 'quantized_images', 'texts']
     forward_and_backward = {'forward', 'backward'}
     checkpoint_path = 'EMPTY'
 
@@ -34,24 +36,26 @@ class СSBMTrainer:
         prior_iterations: int,
         use_mini_batch: bool,
         accelerator: Accelerator,
-        forward_model: Union[D3PM, ImageD3PM, LatentD3PM],
-        backward_model: Union[D3PM, ImageD3PM, LatentD3PM],
+        forward_model: Union[D3PM, ImageD3PM, LatentD3PM, TextD3PM],
+        backward_model: Union[D3PM, ImageD3PM, LatentD3PM, TextD3PM],
         prior: Prior,
         forward_optimizer: Optimizer,
         backward_optimizer: Optimizer,
         forward_scheduler: Optional[ReduceLROnPlateauWithWarmup],
         backward_scheduler: Optional[ReduceLROnPlateauWithWarmup],
         codec: Optional[Codec] = None,
-        exp_type: Literal['toy', 'images', 'quantized_images'] = 'toy', 
+        tokenizer: Optional[Tokenizer] = None,
+        exp_type: Literal['toy', 'images', 'quantized_images', 'texts'] = 'toy', 
         exp_path: Optional[str] = None,
         kl_loss_coeff: float = 1.,
         ce_loss_coeff: float = 0.001,
+        mse_loss_coeff: float = 0.,
         ema_decay: float = 0.999,
         eval_freq: int = 1000,
         num_trajectories: int = 4,
         num_translations: int = 5,
     ) -> None:
-        assert kl_loss_coeff > 0 or ce_loss_coeff > 0, 'At least one loss coefficents must be greater than zero!'
+        assert kl_loss_coeff > 0 or ce_loss_coeff > 0 or mse_loss_coeff > 0, 'At least one loss coefficents must be greater than zero!'
 
         self.iterations = iterations
         self.inner_iterations = inner_iterations
@@ -69,6 +73,7 @@ class СSBMTrainer:
         }
         self.prior = prior
         self.codec = codec
+        self.tokenizer = tokenizer
         self.optimizers = {
             'forward': forward_optimizer,
             'backward': backward_optimizer
@@ -80,8 +85,10 @@ class СSBMTrainer:
                 'backward': backward_scheduler
             }
 
+        self.ignore_index = 0 if exp_type == 'texts' else -100
         self.kl_loss_coeff = kl_loss_coeff
         self.ce_loss_coeff = ce_loss_coeff
+        self.mse_loss_coeff = mse_loss_coeff
         self.eps = 1e-6
 
         self.exp_type = exp_type
@@ -90,18 +97,29 @@ class СSBMTrainer:
             self.checkpoint_path = os.path.join(exp_path, 'checkpoints')            
 
         self.is_generation_normalized = (exp_type == 'quantized_images')
-        self.fids = {
-            'forward': FID(
-                feature=2048, 
-                reset_real_features=False, 
-                normalize=self.is_generation_normalized
-            ).to(self.accelerator.device),
-            'backward': FID(
-                feature=2048, 
-                reset_real_features=False, 
-                normalize=self.is_generation_normalized
-            ).to(self.accelerator.device)
-        }
+        if exp_type == 'quantized_images' or exp_type == 'images':
+            self.fids = {
+                'forward': FID(
+                    feature=2048, 
+                    reset_real_features=False, 
+                    normalize=self.is_generation_normalized
+                ).to(self.accelerator.device),
+                'backward': FID(
+                    feature=2048, 
+                    reset_real_features=False, 
+                    normalize=self.is_generation_normalized
+                ).to(self.accelerator.device)
+            }
+        elif exp_type == 'texts':
+            self.accuracy = {
+                'forward': ClassifierAccuracy(fb='forward').to(self.accelerator.device),
+                'backward': ClassifierAccuracy(fb='backward').to(self.accelerator.device)
+            }
+            self.bleu = {
+                'forward': BLEUScore(),
+                'backward': BLEUScore()
+            }
+        
         self.eval_freq = eval_freq
         self.num_trajectories = num_trajectories
         self.num_translations = num_translations
@@ -128,10 +146,10 @@ class СSBMTrainer:
         pred_x_start_logits: Any, 
     ) -> torch.Tensor:   
         """Cross-Entropy calculation."""         
-        if self.exp_type == 'toy' or self.exp_type == 'images' or self.exp_type == 'quantized_images':
+        if self.exp_type == 'toy' or self.exp_type == 'images' or self.exp_type == 'quantized_images' or self.exp_type == 'texts':
             pred_x_start_logits = pred_x_start_logits.flatten(start_dim=0, end_dim=-2)
             true_x_start = true_x_start.flatten(start_dim=0, end_dim=-1)
-            ce_loss = torch.nn.CrossEntropyLoss()(pred_x_start_logits, true_x_start)
+            ce_loss = F.cross_entropy(pred_x_start_logits, true_x_start, ignore_index=self.ignore_index)
         else:
             raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
         return ce_loss
@@ -184,6 +202,12 @@ class СSBMTrainer:
                 kl_loss = self.kl_loss(true_q_posterior_logits, pred_q_posterior_logits)
                 loss += self.kl_loss_coeff * kl_loss
 
+                # MSE-loss calculation
+                true_probs = torch.softmax(true_q_posterior_logits, dim=-1)
+                pred_probs = torch.softmax(pred_q_posterior_logits, dim=-1)
+                mse = F.mse_loss(true_probs, pred_probs)
+                loss += self.mse_loss_coeff * mse
+
                 # CE-loss calculation
                 ce_loss = self.ce_loss(true_x_start, pred_x_start_logits)
                 loss += self.ce_loss_coeff * ce_loss
@@ -196,7 +220,8 @@ class СSBMTrainer:
 
             info = {
                 "kl_loss": self.accelerator.reduce(kl_loss.detach(), 'mean'),  # type: ignore
-                "ce_loss": self.accelerator.reduce(ce_loss.detach(), 'mean')  # type: ignore
+                "ce_loss": self.accelerator.reduce(ce_loss.detach(), 'mean'),  # type: ignore
+                "mse_loss": self.accelerator.reduce(mse.detach(), 'mean')  # type: ignore
             }
                 
             if self.step % self.eval_freq == 0:
@@ -222,6 +247,16 @@ class СSBMTrainer:
                 pred_x_start = self.codec.decode_to_image(pred_x_start)
             else:
                 pred_x_start = self.models[fb].sample(test_x_end, self.prior)
+
+            if self.exp_type == 'texts' and self.tokenizer is not None:
+                pred_x_start = self.tokenizer.decode(pred_x_start.numpy()) 
+                test_x_end = self.tokenizer.decode(test_x_end.numpy())
+                self.accelerator.log(
+                    {f'{fb}_text': pred_x_start[0],
+                     f'{fb}_text': test_x_end[0]}, 
+                    step=step
+                )
+                return
                 
             if self.codec is not None:
                 traj_start = encoded_test_x_end[:self.num_trajectories]
@@ -248,6 +283,7 @@ class СSBMTrainer:
                 trajectories = self.codec.decode_to_image(trajectories.reshape(-1, *traj_start.shape[1:]))
                 trajectories = trajectories.reshape(-1, self.num_trajectories * self.num_translations, *pred_x_start.shape[1:])
 
+            
             visualize(
                 exp_type=self.exp_type, 
                 x_end=test_x_end, 
@@ -277,7 +313,13 @@ class СSBMTrainer:
         dataloader: DataLoader,
         step: Optional[int]
     ):
-        self.fids[fb].reset()
+        if self.exp_type == 'quantized_images' or self.exp_type == 'images':
+            self.fids[fb].reset()
+        elif self.exp_type == 'texts':
+            self.accuracy[fb].reset()
+            self.bleu[fb].reset()
+        else:
+            raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
         self.models[fb].eval()
 
         trange = tqdm(
@@ -295,14 +337,30 @@ class СSBMTrainer:
                 else:
                     pred_x_start = self.models[fb].sample(test_x_end, self.prior)
 
-                if not self.is_generation_normalized:
-                    test_x_start = test_x_start.to(dtype=torch.uint8)
-                    pred_x_start = pred_x_start.to(dtype=torch.uint8)
-                    
-                self.fids[fb].update(test_x_start, real=True)
-                self.fids[fb].update(pred_x_start, real=False)
+                if self.exp_type == 'quantized_images' or self.exp_type == 'images':  
+                    if not self.is_generation_normalized:
+                        test_x_start = test_x_start.to(dtype=torch.uint8)
+                        pred_x_start = pred_x_start.to(dtype=torch.uint8)
+                    self.fids[fb].update(test_x_start, real=True)
+                    self.fids[fb].update(pred_x_start, real=False)
+                elif self.exp_type == 'texts' and self.tokenizer is not None:
+                    pred_x_start = self.tokenizer.decode(pred_x_start.numpy()) 
+                    test_x_start = self.tokenizer.decode(test_x_start.numpy())
+                    self.accuracy[fb].update(pred_x_start)
+                    self.bleu[fb].update(pred_x_start, test_x_start)
+                else:
+                    raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
 
-        self.accelerator.log({f'{fb}_fid': self.fids[fb].compute().detach()}, step=step)
+        if self.exp_type == 'quantized_images' or self.exp_type == 'images':  
+            self.accelerator.log({f'{fb}_fid': self.fids[fb].compute().detach()}, step=step)
+        elif self.exp_type == 'texts':
+            self.accelerator.log(
+                {f'{fb}_accuracy': self.accuracy[fb].compute().detach(), 
+                 f'{fb}_bleu': self.bleu[fb].compute().detach()}, 
+                step=step
+            )
+        else:
+            raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
 
 
     def train(

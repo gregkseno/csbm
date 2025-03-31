@@ -156,6 +156,7 @@ if __name__ == '__main__':
         backward_scheduler=backward_scheduler,
         kl_loss_coeff=args.train.kl_loss_coeff,
         ce_loss_coeff=args.train.ce_loss_coeff,
+        mse_loss_coeff=args.train.mse_loss_coeff,
         ema_decay=args.train.ema_decay,
         exp_type=args.data.type,
         exp_path=exp_path,

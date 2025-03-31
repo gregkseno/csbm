@@ -1,5 +1,5 @@
 import sys
-from typing import Any, Literal, Optional, Tuple, Union
+from typing import Any, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -12,6 +12,7 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, datasets
+from tokenizers import Tokenizer
 
 from tqdm.auto import tqdm
 tqdm.pandas()
@@ -71,7 +72,7 @@ class DiscreteSwissRollDataset(BaseDataset):
             n_samples=n_samples,
             noise=noise
         )[0][:, [0, 2]]
-        dataset = (dataset - dataset.mean()) / dataset.std()
+        dataset = 1.3 * (dataset - dataset.mean()) / dataset.std()
         dataset = self.continuous_to_discrete(dataset, num_categories)
         if not train:
             dataset[:4] = torch.tensor([[25, 25], [46, 4], [6, 44], [49, 49]])
@@ -361,6 +362,68 @@ class AFHQDataset(BaseDataset):
                 file_name = image_path[-1].split('.')[0]
                 image_path = os.path.join(*file_path, file_name)
                 np.save(image_path, encoded_image)
+
+
+class YelpDataset(BaseDataset):
+    def __init__(
+        self, 
+        sentiment: Literal['positive', 'negative', 'all'],
+        data_dir: str, 
+        length: Optional[int] = None,
+        split: float = 0.8,
+        train: bool = True,
+    ):
+        self.sentiment = sentiment
+        self.length = length
+        self.train = train
+        
+        data_dir = os.path.join(data_dir, 'yelp', 'yelp_academic_dataset_review.json')
+        # TODO: Проверить что правильно загружается
+        dataset: pd.DataFrame = pd.read_json(data_dir)
+        
+        if sentiment == 'positive':
+            positive_subset = dataset[dataset['stars'] >= 4]
+            positive_split_index = int(len(positive_subset) * split)
+            dataset = positive_subset[:positive_split_index] if train else positive_subset.iloc[positive_split_index:]
+        elif sentiment == 'negative':
+            negative_subset = dataset[dataset['stars'] <= 2]
+            negative_split_index = int(len(negative_subset) * split)
+            dataset = negative_subset[:negative_split_index] if train else negative_subset.iloc[negative_split_index:]
+        else:
+            dataset = dataset[:int(len(dataset) * split)] if train else dataset.iloc[int(len(dataset) * split):]
+        
+        self.dataset = dataset['text'].tolist()
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        text = self.dataset[idx]
+        return text
+    
+    @staticmethod
+    def train_sentencepiece(
+        data_dir: str,
+        vocab_size: int = 8096,
+    ):
+        data_dir = os.path.join(data_dir, 'yelp', 'yelp_academic_dataset_review.json')
+        dataset: pd.DataFrame = pd.read_json(data_dir)
+        texts = dataset['text'].tolist()
+        with open('yelp_review.txt', 'w') as f:
+            for text in texts:
+                f.write(text + '\n')
+
+        spm.SentencePieceTrainer.train( # type: ignore
+            input='yelp_review.txt',
+            model_prefix='yelp',
+            vocab_size=vocab_size,
+            model_type='bpe',
+            pad_id=0,
+            unk_id=1,
+            bos_id=2,
+            eos_id=3,
+            user_defined_symbols=['[PAD]', '[UNK]', '[BOS]', '[EOS]'],
+        )
 
 
 class CouplingDataset(BaseDataset):

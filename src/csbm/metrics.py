@@ -1,0 +1,103 @@
+from typing import List, Literal, Union
+
+import torch
+from torch import nn
+
+from torchmetrics.image.kid import KernelInceptionDistance
+from torchmetrics.image.fid import FrechetInceptionDistance as FID
+from torchmetrics.text import BLEUScore
+from torchmetrics import Metric
+
+from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
+
+FID_WEIGHTS_URL = 'https://github.com/mseitzer/pytorch-fid/releases/download/fid_weights/pt_inception-2015-12-05-6726825d.pth'  # noqa: E501
+CLIP_MODEL_NAME = "openai/clip-vit-large-patch14-336"
+
+
+def _resize_bicubic(images, size):
+    """Resize images using bicubic interpolation."""
+    images = torch.from_numpy(images.transpose(0, 3, 1, 2))
+    images = torch.nn.functional.interpolate(images, size=(size, size), mode="bicubic")
+    images = images.permute(0, 2, 3, 1).numpy()
+    return images
+
+
+class CLIPFeatureExtractor(nn.Module):
+    """Custom CLIP image embedding calculator adapted from https://github.com/sayakpaul/cmmd-pytorch."""
+
+    def __init__(self, model_name=CLIP_MODEL_NAME):
+        super().__init__()
+        self.image_processor = CLIPImageProcessor.from_pretrained(model_name)
+        self.model = CLIPVisionModelWithProjection.from_pretrained(model_name).eval()
+        self.input_image_size = self.image_processor.crop_size["height"]
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
+    def forward(self, images):
+        """Computes CLIP embeddings for a batch of images."""
+        images = _resize_bicubic(images, self.input_image_size)
+        inputs = self.image_processor(
+            images=images,
+            do_normalize=True,
+            do_center_crop=False,
+            do_resize=False,
+            do_rescale=False,
+            return_tensors="pt",
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        image_embs = self.model(**inputs).image_embeds.cpu()
+        image_embs /= torch.linalg.norm(image_embs, axis=-1, keepdims=True)
+        return image_embs
+
+
+class CMMD(KernelInceptionDistance):
+    """CMMD: CLIP-based Maximum Mean Discrepancy (MMD) Metric."""
+
+    def __init__(self, subsets=100, subset_size=1000, degree=1, gamma=None, coef=1.0, **kwargs):
+        self.clip_feature_extractor = CLIPFeatureExtractor()
+
+        super().__init__(
+            feature=self.clip_feature_extractor,
+            subsets=subsets,
+            subset_size=subset_size,
+            degree=degree,
+            gamma=gamma,
+            coef=coef,
+            **kwargs
+        )
+
+
+class ClassifierAccuracy(Metric):
+    """Classifier accuracy metric."""
+
+    def __init__(self, fb: Literal['forward', 'backward'], cls_path: str = '', **kwargs):
+        super().__init__(**kwargs)
+        self.classifier = cls_path
+        self.fb = fb
+        self.register_buffer("predictions", torch.zeros(0))
+        self.register_buffer("targets", torch.zeros(0))
+
+    def update(self, texts: Union[str, List[str]]):
+        """Update the metric with text inputs."""
+        # Handle predictions
+        with torch.no_grad():
+            probs = self.classifier(texts)
+            predictions = (probs >= 0.5).long()  # Binary classification threshold
+        self.predictions = torch.cat([self.predictions, predictions], dim=0)
+        
+        # Handele targets
+        if self.fb == "forward":
+            targets = torch.zeros(len(texts), device=self.predictions.device).long()
+        else:
+            targets = torch.ones(len(texts), device=self.predictions.device).long()
+        self.targets = torch.cat([self.targets, targets], dim=0)
+
+    def compute(self) -> torch.Tensor:
+        """Compute the accuracy."""
+        correct = (self.predictions == self.targets).sum()
+        return correct / len(self.targets) if len(self.targets) > 0 else torch.zeros(1)
+
+       
