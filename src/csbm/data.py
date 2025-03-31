@@ -553,7 +553,7 @@ def centroid_gaussian_prior(
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats.transpose(1, 2), p_cum_mats
+    return p_onestep_mats[0].transpose(0, 1), p_cum_mats
 
 
 # Cumulative returns with following pattern
@@ -597,8 +597,8 @@ class Prior(nn.Module):
             p_onestep, p_cum = centroid_gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps, centroids)
         else:
             raise NotImplementedError(f'Got unknown prior: {prior_type} or centroids is None!')
-        self.register_buffer("p_onestep", p_onestep)
-        self.register_buffer("p_cum", p_cum)
+        self.register_buffer("p_onestep", p_onestep.to(dtype=torch.float32))
+        self.register_buffer("p_cum", p_cum.to(dtype=torch.float32))
         
     def extract(
         self, 
@@ -608,18 +608,27 @@ class Prior(nn.Module):
         row_id: Optional[torch.Tensor] = None,
         column_id: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        """Extracts row/column/element from transition matrix."""
-        p_mat = self.p_onestep if mat_type == 'onestep' else self.p_cum
-        
+        """Extracts row/column/element from transition matrix."""        
         if row_id is not None and column_id is not None:
-            t = broadcast(t, row_id.dim() - 1)
-            return p_mat[t, row_id, column_id].unsqueeze(-1)
+            if mat_type  == 'onestep':
+                return self.p_onestep[row_id, column_id].unsqueeze(-1)
+            else: 
+                t = broadcast(t, row_id.dim() - 1)
+                return self.p_cum[t, row_id, column_id].unsqueeze(-1)
+            
         if row_id is not None and column_id is None:
-            t = broadcast(t, row_id.dim() - 1)
-            return p_mat[t, row_id]
+            if mat_type  == 'onestep':
+                return self.p_onestep[row_id]
+            else: 
+                t = broadcast(t, row_id.dim() - 1)
+                self.p_cum[t, row_id]
+        
         if row_id is None and column_id is not None:
-            t = broadcast(t, column_id.dim() - 1)
-            return p_mat[t, :, column_id]
+            if mat_type  == 'onestep':
+                return self.p_onestep[:, column_id]
+            else:
+                t = broadcast(t, column_id.dim() - 1)
+                return self.p_cum[t, :, column_id]
         raise ValueError('x_start and x_end cannot be None both!')
 
     def sample_bridge(self, x_start: torch.Tensor, x_end: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
