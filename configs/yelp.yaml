@@ -6,7 +6,7 @@ data:
   num_timesteps: 100
   num_skip_steps: 1
   coupling_type: independent # choices: "independent", "prior"
-  train_test_split: 0.9
+  train_test_split: 0.8
 model: # TODO
   config:
     name: small
@@ -33,6 +33,7 @@ train:
   use_mini_batch: true
   ce_loss_coeff: 0.001
   kl_loss_coeff: 1
+  mse_loss_coeff: 0
   ema_decay: 0.999
   optimizer:
     lr: 0.0004

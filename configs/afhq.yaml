@@ -28,6 +28,7 @@ train:
   use_mini_batch: false
   ce_loss_coeff: 0.001
   kl_loss_coeff: 1
+  mse_loss_coeff: 0
   ema_decay: 0.999
   optimizer:
     lr: 0.0004
