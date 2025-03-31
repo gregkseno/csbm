@@ -5,12 +5,14 @@ from omegaconf import OmegaConf
 
 from accelerate import Accelerator, ProfileKwargs
 from accelerate.utils import set_seed
+from transformers import PreTrainedTokenizerFast
 
 set_seed(42)
 import torch
 
 sys.path.append('src')
 from csbm.data import (
+    YelpDataset,
     AFHQDataset,
     CelebaDataset,
     DiscreteGaussianDataset, 
@@ -21,6 +23,7 @@ from csbm.data import (
 from csbm.models.toy import D3PM
 from csbm.models.images import ImageD3PM
 from csbm.models.quantized_images import Codec, LatentD3PM
+from csbm.models.texts import TextD3PM
 from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 from csbm.trainer import СSBMTrainer
 from csbm.utils import create_expertiment
@@ -55,6 +58,13 @@ if __name__ == '__main__':
     accelerator.print(f'Created experiment folder in {exp_path}.')
     accelerator.print(f'Initializing experiment with:\n{OmegaConf.to_yaml(args)}')    
 
+    tokenizer = None
+    if args.data.type == 'texts':
+        tokenizer = PreTrainedTokenizerFast(
+            tokenizer_file=args.tokenizer.path,
+            model_max_length=args.data.dim,
+        )
+
     accelerator.print('Loading dataset...')
     with accelerator.main_process_first(): # Avoid creating dirs at the same time
         if args.data.dataset == 'swiss_roll':
@@ -79,6 +89,12 @@ if __name__ == '__main__':
             trainset_y = AFHQDataset(animal_type='wild', size=args.data.dim, data_dir=data_dir)
             testset_x = AFHQDataset(animal_type='cat', use_quantized=False, size=args.data.dim, data_dir=data_dir, train=False)
             testset_y = AFHQDataset(animal_type='wild', use_quantized=False, size=args.data.dim, data_dir=data_dir, train=False)
+        elif args.data.dataset == 'yelp':
+            assert tokenizer is not None, 'Tokenizer is not initialized!'
+            trainset_x = YelpDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, length=args.data.dim, split=args.data.train_test_split)
+            trainset_y = YelpDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, length=args.data.dim, split=args.data.train_test_split)
+            testset_x = YelpDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, length=args.data.dim, split=args.data.train_test_split, train=False)
+            testset_y = YelpDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, length=args.data.dim, split=args.data.train_test_split, train=False)
         else:
             raise NotImplementedError(f"Unknown exp type {args.data.type}!")
 
@@ -104,6 +120,8 @@ if __name__ == '__main__':
         model_class = ImageD3PM
     elif args.data.type == 'quantized_images':
         model_class = LatentD3PM
+    elif args.data.type == 'texts':
+        model_class = TextD3PM
     else:
         raise NotImplementedError(f"Unknown exp type {args.data.type}!")
     
@@ -150,6 +168,7 @@ if __name__ == '__main__':
         backward_model=backward_model,
         prior=prior,
         codec=codec,
+        tokenizer=tokenizer,
         forward_optimizer=forward_optimizer,
         backward_optimizer=backward_optimizer,
         forward_scheduler=forward_scheduler,

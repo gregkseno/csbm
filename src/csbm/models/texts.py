@@ -391,12 +391,14 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 class TextD3PM(nn.Module):
     def __init__(
         self, 
+        input_dim: int = 128,
         num_categories: int = 8096,
         num_timesteps: int = 100, 
         config: Optional[omegaconf.DictConfig] = None,
     ) -> None:
         super().__init__()
         self.model = DIT(config, num_categories)
+        self.input_dim = input_dim
         self.num_categories = num_categories
         self.num_timesteps = num_timesteps
 

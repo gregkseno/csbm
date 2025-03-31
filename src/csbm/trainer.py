@@ -12,13 +12,14 @@ from torch.nn import functional as F
 from torch.optim import Optimizer # type: ignore
 from torch.utils.data import DataLoader, RandomSampler
 from torch_ema import ExponentialMovingAverage as EMA
+from transformers import PreTrainedTokenizerFast
 
 from csbm.models.quantized_images import LatentD3PM, Codec
 from csbm.models.toy import D3PM
 from csbm.models.images import ImageD3PM
 from csbm.models.texts import TextD3PM
 
-from csbm.data import BaseDataset, CouplingDataset, Prior, Tokenizer
+from csbm.data import BaseDataset, CouplingDataset, Prior
 from csbm.metrics import FID, ClassifierAccuracy, BLEUScore
 from csbm.utils import visualize, visualize_trajectory
 from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
@@ -44,7 +45,7 @@ class СSBMTrainer:
         forward_scheduler: Optional[ReduceLROnPlateauWithWarmup],
         backward_scheduler: Optional[ReduceLROnPlateauWithWarmup],
         codec: Optional[Codec] = None,
-        tokenizer: Optional[Tokenizer] = None,
+        tokenizer: Optional[PreTrainedTokenizerFast] = None,
         exp_type: Literal['toy', 'images', 'quantized_images', 'texts'] = 'toy', 
         exp_path: Optional[str] = None,
         kl_loss_coeff: float = 1.,

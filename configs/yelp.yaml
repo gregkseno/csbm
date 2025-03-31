@@ -8,7 +8,19 @@ data:
   coupling_type: independent # choices: "independent", "prior"
   train_test_split: 0.9
 model: # TODO
-tokenizer: # TODO
+  config:
+    name: small
+    type: ddit
+    hidden_size: 768
+    cond_dim: 128
+    length: 1024
+    n_blocks: 12
+    n_heads: 12
+    scale_by_sigma: True
+    dropout: 0.1
+    tie_word_embeddings: False
+tokenizer:
+  path: checkpoints/tokenizer-yelp.json
 prior:
   alpha: 0.002
   type: uniform # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"

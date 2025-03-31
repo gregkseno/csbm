@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=train-swiss-roll
+#SBATCH --job-name=train-yelp
 #SBATCH --partition=ais-gpu
-#SBATCH --reservation=HPC-2507-2
-#SBATCH --error=runs/train-swiss-roll-%j.err
-#SBATCH --output=runs/train-swiss-roll-%j.log
+#SBATCH --reservation=HPC-2507
+#SBATCH --error=runs/train-yelp-%j.err
+#SBATCH --output=runs/train-yelp-%j.log
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=30G
+#SBATCH --cpus-per-task=12
+#SBATCH --mem=100G
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --time=16-00:00:00
@@ -17,8 +17,8 @@ accelerate launch \
     --num_machines=1 \
     --mixed_precision='no' \
     --dynamo_backend='no' \
-    --main_process_port=29004 \
+    --main_process_port=32884 \
     scripts/train.py \
-        --config './configs/swiss_roll.yaml' \
+        --config './configs/yelp.yaml' \
         --exp_dir './experiments' \
         --data_dir './data'
