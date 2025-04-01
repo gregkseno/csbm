@@ -23,7 +23,7 @@ class DiffusionModel(nn.Module):
         net = []
         ch_prev = input_dim + timestep_dim
         for ch_next in layers:
-            net.extend([nn.Linear(ch_prev, ch_next), nn.BatchNorm1d(ch_next), nn.ReLU()])
+            net.extend([nn.Linear(ch_prev, ch_next), nn.ReLU()])
             ch_prev = ch_next
         net.append(nn.Linear(ch_prev, num_categories * input_dim))
         self.net = nn.Sequential(*net)
