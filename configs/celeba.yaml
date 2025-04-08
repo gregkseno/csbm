@@ -22,6 +22,7 @@ prior:
   type: centroid_gaussian # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"
 train:
   batch_size: 32
+  low_precision: false
   gradient_accumulation_steps: 1
   iterations: 20
   prior_iterations: 20

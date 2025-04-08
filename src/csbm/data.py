@@ -13,6 +13,7 @@ from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, datasets
 from transformers import PreTrainedTokenizerFast
+import json
 
 from tqdm.auto import tqdm
 tqdm.pandas()
@@ -369,46 +370,69 @@ class YelpDataset(BaseDataset):
         self, 
         sentiment: Literal['positive', 'negative', 'all'],
         data_dir: str, 
-        tokenizer: PreTrainedTokenizerFast,
-        length: int = 128,
+        tokenizer: Optional[PreTrainedTokenizerFast] = None,
+        max_length: Optional[int] = None,
         split: float = 0.8,
         train: bool = True,
     ):
-        self.tokenizer = tokenizer
-        self.length = length
         self.sentiment = sentiment
         self.train = train
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.file_path = os.path.join(data_dir, 'yelp', 'yelp_academic_dataset_review.json')
         
-        data_dir = os.path.join(data_dir, 'yelp', 'yelp_academic_dataset_review.json')
-        # TODO: Проверить что правильно загружается
-        dataset: pd.DataFrame = pd.read_json(data_dir, lines=True)
+        self.file_positions = []
+        with open(self.file_path, 'r') as f:
+            pos, line = f.tell(), f.readline()
+            while line:
+                data = json.loads(line)
+                stars = data['stars']
+                if sentiment == 'positive' and stars >= 4:
+                    self.file_positions.append(pos)
+                elif sentiment == 'negative' and stars <= 2:
+                    self.file_positions.append(pos)
+                elif sentiment == 'all':
+                    self.file_positions.append(pos)
+                pos, line = f.tell(), f.readline()
         
-        if sentiment == 'positive':
-            positive_subset = dataset[dataset['stars'] >= 4]
-            positive_split_index = int(len(positive_subset) * split)
-            self.dataset = positive_subset[:positive_split_index] if train else positive_subset.iloc[positive_split_index:]
-        elif sentiment == 'negative':
-            negative_subset = dataset[dataset['stars'] <= 2]
-            negative_split_index = int(len(negative_subset) * split)
-            self.dataset = negative_subset[:negative_split_index] if train else negative_subset.iloc[negative_split_index:]
+        split_idx = int(len(self.file_positions) * split)
+        if train:
+            self.file_positions = self.file_positions[:split_idx]
         else:
-            self.dataset = dataset[:int(len(dataset) * split)] if train else dataset.iloc[int(len(dataset) * split):]
-        
+            self.file_positions = self.file_positions[split_idx:]
+    
     def __len__(self):
-        return len(self.dataset)
+        return len(self.file_positions)
 
     def __getitem__(self, idx):
-        text = self.dataset['text'].iloc[idx]
-        # Tokenize the text with padding and truncation
-        encoded = self.tokenizer.encode(
-            text,
-            add_special_tokens=True,
-            max_length=self.length,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt"
-        )
-        return encoded
+        file_pos = self.file_positions[idx]
+        with open(self.file_path, 'r') as f:
+            f.seek(file_pos)
+            line = f.readline()
+            data = json.loads(line)
+            text = data['text']
+            if self.tokenizer is not None:
+                text = self.tokenizer.bos_token + text
+        if self.tokenizer is not None:
+            text = self.tokenizer.encode(
+                text=text, 
+                padding='max_length', 
+                truncation=True, 
+                max_length=self.max_length,
+                return_tensors='pt',
+                return_token_type_ids=False,
+                return_attention_mask=False,
+            ).squeeze() # type: ignore
+        return text
+
+    def repeat(self, n: int, max_len: int):
+        original_positions = self.file_positions.copy()
+        self.file_positions = []
+        for _ in range(n):
+            self.file_positions.extend(original_positions)
+            if len(self.file_positions) >= max_len:
+                self.file_positions = self.file_positions[:max_len]
+                break
 
 
 class CouplingDataset(BaseDataset):
@@ -463,7 +487,7 @@ def uniform_prior(
     num_timesteps: int,
     num_skip_steps: int
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    p_onestep_mats = torch.tensor([alpha / (num_categories - 1)] * num_categories**2, dtype=torch.float64)
+    p_onestep_mats = torch.tensor([alpha / (num_categories - 1)] * num_categories**2, dtype=torch.float32)
     p_onestep_mats = p_onestep_mats.view(num_categories, num_categories)
     p_onestep_mats -= torch.diag(torch.diag(p_onestep_mats))
     p_onestep_mats += torch.diag(torch.tensor([1 - alpha] * num_categories))
@@ -473,7 +497,7 @@ def uniform_prior(
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats[0].transpose(0, 1), p_cum_mats
+    return p_onestep_mats[1].transpose(0, 1), p_cum_mats
 
 def von_mises_prior(
     alpha: float,
@@ -495,16 +519,16 @@ def von_mises_prior(
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats[0].transpose(0, 1), p_cum_mats
+    return p_onestep_mats[1].transpose(0, 1), p_cum_mats
 
 def gaussian_prior(
     alpha: float,
     num_categories: int, 
     num_timesteps: int, 
     num_skip_steps: int,
-    use_doubly_stochastic: bool = False
+    use_doubly_stochastic: bool = True
 ):
-    p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float64)
+    p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float32)
     indices = np.arange(num_categories)[None, ...]
     values = -4 * (indices - indices.T)**2 / (alpha**2 * (num_categories - 1)**2)
 
@@ -515,7 +539,7 @@ def gaussian_prior(
             start=-(num_categories-1), 
             stop=(num_categories+1), 
             step=1, 
-            dtype=np.float64
+            dtype=np.float32
         ) ** 2
         norm_const /= (alpha**2 * (num_categories - 1)**2)
         for i in range(num_categories):
@@ -534,7 +558,7 @@ def gaussian_prior(
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats[0].transpose(0, 1), p_cum_mats
+    return p_onestep_mats[1].transpose(0, 1), p_cum_mats
 
 def centroid_gaussian_prior(
     alpha: float,
@@ -553,7 +577,7 @@ def centroid_gaussian_prior(
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats[0].transpose(0, 1), p_cum_mats
+    return p_onestep_mats[1].transpose(0, 1), p_cum_mats
 
 
 # Cumulative returns with following pattern
@@ -578,14 +602,14 @@ class Prior(nn.Module):
             'centroid_gaussian',
             'von_mises',
         ] = 'uniform',
-        centroids: Optional[torch.Tensor] = None
-
+        centroids: Optional[torch.Tensor] = None,
+        eps: float = 1e-20
     ) -> None:
         super().__init__()
         self.num_categories = num_categories
         self.num_timesteps = num_timesteps
         self.num_skip_steps = num_skip_steps
-        self.eps = 1e-6
+        self.eps = eps
         self.prior_type = prior_type
         if prior_type == 'gaussian':
             p_onestep, p_cum = gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps)
@@ -639,7 +663,7 @@ class Prior(nn.Module):
         log_probs = torch.log(p_start_t + self.eps) + torch.log(p_t_end + self.eps)
         log_probs = log_probs - log_probs.logsumexp(dim=-1, keepdim=True)
         
-        noise = torch.rand_like(log_probs)
+        noise = torch.rand_like(log_probs, dtype=x_start.dtype)
         noise = torch.clamp(noise, min=torch.finfo(noise.dtype).tiny, max=1.)
         gumbel_noise = -torch.log(-torch.log(noise))
         x_t = torch.argmax(log_probs + gumbel_noise, dim=-1)
@@ -667,7 +691,7 @@ class Prior(nn.Module):
 
         # fact2 is "guess of x_{t-1}" from x_{0}
         x_start_probs = x_start_logits.softmax(dim=-1)  # bs, ..., num_categories
-        fact2 = torch.einsum("b...c,bcd->b...d", x_start_probs, self.p_cum[t - 1].to(dtype=x_start_probs.dtype))
+        fact2 = torch.einsum("b...c,bcd->b...d", x_start_probs, self.p_cum[t - 1])
         p_posterior_logits = torch.log(fact1 + self.eps) + torch.log(fact2 + self.eps)
         p_posterior_logits = p_posterior_logits - p_posterior_logits.logsumexp(dim=-1, keepdim=True) # Normalize
         

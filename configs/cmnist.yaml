@@ -24,6 +24,7 @@ prior:
   type: uniform # choices: "uniform", "gaussian", "von_mises"
 train:
   batch_size: 128
+  low_precision: false
   gradient_accumulation_steps: 1
   iterations: 20
   prior_iterations: 5

@@ -21,10 +21,10 @@ import torch.nn.functional as F
 from einops import rearrange
 
 # Flags required to enable jit fusion kernels
-torch._C._jit_set_profiling_mode(False)
-torch._C._jit_set_profiling_executor(False)
-torch._C._jit_override_can_fuse_on_cpu(True)
-torch._C._jit_override_can_fuse_on_gpu(True)
+torch._C._jit_set_profiling_mode(False) # type: ignore
+torch._C._jit_set_profiling_executor(False) # type: ignore
+torch._C._jit_override_can_fuse_on_cpu(True) # type: ignore
+torch._C._jit_override_can_fuse_on_gpu(True) # type: ignore
 
 
 def bias_dropout_add_scale(
@@ -410,11 +410,11 @@ class TextD3PM(nn.Module):
 
     def markov_sample(self, x: torch.Tensor, t: torch.Tensor, prior: Prior):
         r"""Samples from $p(x_{t-1} | x_{t}, \hat{x_{0}})$, where $\hat{x_{0}} \sim m_{\theta}(\hat{x_{0}} | x_{t})$."""
-        first_step = (t == 1).long().view((x.shape[0], *[1] * (x.dim() - 1)))
+        first_step = (t == 1).view((x.shape[0], *[1] * (x.dim() - 1))).to(dtype=x.dtype)
         
         pred_x_start_logits = self(x, t)
         pred_q_posterior_logits = prior.posterior_logits(pred_x_start_logits, x, t, logits=True)
-        noise = torch.rand_like(pred_q_posterior_logits)
+        noise = torch.rand_like(pred_q_posterior_logits, dtype=x.dtype)
         noise = torch.clamp(noise, min=torch.finfo(noise.dtype).tiny, max=1.)
         gumbel_noise = -torch.log(-torch.log(noise))
         random_samples = torch.argmax(pred_q_posterior_logits + gumbel_noise, dim=-1)
@@ -432,7 +432,7 @@ class TextD3PM(nn.Module):
     @torch.no_grad()
     def sample(self, x: torch.Tensor, prior: Prior) -> torch.Tensor:
         for t in reversed(range(1, self.num_timesteps + 2)):
-            t = torch.tensor([t] * x.shape[0], device=self.device)
+            t = torch.tensor([t] * x.shape[0], device=self.device, dtype=x.dtype)
             x = self.markov_sample(x, t, prior)
         return x
     
@@ -440,7 +440,7 @@ class TextD3PM(nn.Module):
     def sample_trajectory(self, x: torch.Tensor, prior: Prior) -> torch.Tensor:
         trajectory = [x]
         for t in reversed(range(1, self.num_timesteps + 2)):
-            t = torch.tensor([t] * x.shape[0], device=self.device)
+            t = torch.tensor([t] * x.shape[0], device=self.device, dtype=x.dtype)
             x = self.markov_sample(x, t, prior)
             trajectory.append(x)
         trajectory = torch.stack(trajectory, dim=0)

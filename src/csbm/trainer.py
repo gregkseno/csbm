@@ -55,6 +55,7 @@ class СSBMTrainer:
         eval_freq: int = 1000,
         num_trajectories: int = 4,
         num_translations: int = 5,
+        dtype: torch.dtype = torch.float32,
     ) -> None:
         assert kl_loss_coeff > 0 or ce_loss_coeff > 0 or mse_loss_coeff > 0, 'At least one loss coefficents must be greater than zero!'
 
@@ -65,15 +66,15 @@ class СSBMTrainer:
 
         self.accelerator = accelerator
         self.models = {
-            'forward': forward_model,
-            'backward': backward_model
+            'forward': forward_model.to(dtype=dtype),
+            'backward': backward_model.to(dtype=dtype)
         }
         self.emas = {
             'forward': EMA(forward_model.parameters(), decay=ema_decay),
             'backward': EMA(backward_model.parameters(), decay=ema_decay)
         }
-        self.prior = prior
-        self.codec = codec
+        self.prior = prior.to(dtype=dtype)
+        self.codec = codec.to(dtype=dtype) if codec is not None else codec
         self.tokenizer = tokenizer
         self.optimizers = {
             'forward': forward_optimizer,
@@ -90,7 +91,6 @@ class СSBMTrainer:
         self.kl_loss_coeff = kl_loss_coeff
         self.ce_loss_coeff = ce_loss_coeff
         self.mse_loss_coeff = mse_loss_coeff
-        self.eps = 1e-6
 
         self.exp_type = exp_type
         self.exp_path = exp_path
@@ -104,12 +104,12 @@ class СSBMTrainer:
                     feature=2048, 
                     reset_real_features=False, 
                     normalize=self.is_generation_normalized
-                ).to(self.accelerator.device),
+                ).to(self.accelerator.device, dtype=dtype),
                 'backward': FID(
                     feature=2048, 
                     reset_real_features=False, 
                     normalize=self.is_generation_normalized
-                ).to(self.accelerator.device)
+                ).to(self.accelerator.device, dtype=dtype)
             }
         elif exp_type == 'texts':
             # self.accuracy = {
@@ -132,9 +132,9 @@ class СSBMTrainer:
     ) -> torch.Tensor:        
         """KL-divergence calculation."""    
         if self.exp_type == 'toy' or self.exp_type == 'images' or self.exp_type == 'quantized_images':
-            kl_loss = torch.softmax(true_q_posterior_logits + self.eps, dim=-1) * (
-                torch.log_softmax(true_q_posterior_logits + self.eps, dim=-1)
-                - torch.log_softmax(pred_q_posterior_logits + self.eps, dim=-1)
+            kl_loss = torch.softmax(true_q_posterior_logits, dim=-1) * (
+                torch.log_softmax(true_q_posterior_logits, dim=-1)
+                - torch.log_softmax(pred_q_posterior_logits, dim=-1)
             )
             kl_loss = kl_loss.sum(dim=-1).mean()
         else:
@@ -250,14 +250,14 @@ class СSBMTrainer:
                 pred_x_start = self.models[fb].sample(test_x_end, self.prior)
 
             if self.exp_type == 'texts' and self.tokenizer is not None:
-                pred_x_start = self.tokenizer.decode(pred_x_start.numpy()) 
-                test_x_end = self.tokenizer.decode(test_x_end.numpy())
+                pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu(), skip_special_tokens=True) 
+                test_x_end = self.tokenizer.batch_decode(test_x_end.cpu(), skip_special_tokens=True)
                 self.accelerator.log(
                     {f'{fb}_text': pred_x_start[0],
                      f'{fb}_text': test_x_end[0]}, 
                     step=step
                 )
-                return
+                return # Just skip the rest part for texts
                 
             if self.codec is not None:
                 traj_start = encoded_test_x_end[:self.num_trajectories]
@@ -345,8 +345,8 @@ class СSBMTrainer:
                     self.fids[fb].update(test_x_start, real=True)
                     self.fids[fb].update(pred_x_start, real=False)
                 elif self.exp_type == 'texts' and self.tokenizer is not None:
-                    pred_x_start = self.tokenizer.decode(pred_x_start.numpy()) 
-                    test_x_start = self.tokenizer.decode(test_x_start.numpy())
+                    pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu()) 
+                    test_x_start = self.tokenizer.batch_decode(test_x_start.cpu())
                     # self.accuracy[fb].update(pred_x_start)
                     self.bleu[fb].update(pred_x_start, test_x_start)
                 else:

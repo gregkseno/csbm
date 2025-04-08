@@ -32,7 +32,7 @@ if __name__ == '__main__':
 
     trainer = trainers.UnigramTrainer(
         vocab_size=args.data.num_categories, 
-        special_tokens=["<unk>", "<pad>"], 
+        special_tokens=["<unk>", "<pad>", "<s>"], 
         unk_token="<unk>",
         show_progress=True,
     )

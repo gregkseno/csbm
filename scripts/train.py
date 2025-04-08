@@ -3,7 +3,7 @@ import os
 import sys
 from omegaconf import OmegaConf
 
-from accelerate import Accelerator, ProfileKwargs
+from accelerate import Accelerator
 from accelerate.utils import set_seed
 from transformers import PreTrainedTokenizerFast
 
@@ -62,7 +62,10 @@ if __name__ == '__main__':
     if args.data.type == 'texts':
         tokenizer = PreTrainedTokenizerFast(
             tokenizer_file=args.tokenizer.path,
-            model_max_length=args.data.dim,
+            padding_side='right',
+            truncation_side='right',
+            bos_token='<s>',
+            pad_token='<pad>',
         )
 
     accelerator.print('Loading dataset...')
@@ -91,10 +94,10 @@ if __name__ == '__main__':
             testset_y = AFHQDataset(animal_type='wild', use_quantized=False, size=args.data.dim, data_dir=data_dir, train=False)
         elif args.data.dataset == 'yelp':
             assert tokenizer is not None, 'Tokenizer is not initialized!'
-            trainset_x = YelpDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, length=args.data.dim, split=args.data.train_test_split)
-            trainset_y = YelpDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, length=args.data.dim, split=args.data.train_test_split)
-            testset_x = YelpDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, length=args.data.dim, split=args.data.train_test_split, train=False)
-            testset_y = YelpDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, length=args.data.dim, split=args.data.train_test_split, train=False)
+            trainset_x = YelpDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split=args.data.train_test_split)
+            trainset_y = YelpDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split=args.data.train_test_split)
+            testset_x = YelpDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split=args.data.train_test_split, train=False)
+            testset_y = YelpDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split=args.data.train_test_split, train=False)
         else:
             raise NotImplementedError(f"Unknown exp type {args.data.type}!")
 
@@ -105,15 +108,17 @@ if __name__ == '__main__':
             ckpt_path=args.codec.ckpt_path,     
         )
 
+    accelerator.print('Loading prior...')
     prior = Prior(
         alpha=args.prior.alpha, 
-        num_categories=args.data.num_categories, 
+        num_categories=args.data.num_categories if tokenizer is None else len(tokenizer), 
         num_timesteps=args.data.num_timesteps, 
         num_skip_steps=args.data.num_skip_steps, 
         prior_type=args.prior.type,
         centroids=codec.centroids if codec is not None and args.prior.type == 'centroid_gaussian' else None
     )
 
+    accelerator.print('Loading models...')
     if args.data.type == 'toy':
         model_class = D3PM
     elif args.data.type == 'images':
@@ -127,13 +132,13 @@ if __name__ == '__main__':
     
     forward_model = model_class(
         input_dim=args.data.dim if args.data.type != 'quantized_images' else args.data.latent_dim,
-        num_categories=args.data.num_categories, 
+        num_categories=args.data.num_categories if tokenizer is None else len(tokenizer), 
         num_timesteps=args.data.num_timesteps,
         **OmegaConf.to_object(args.model) # type: ignore
     )
     backward_model = model_class(
         input_dim=args.data.dim if args.data.type != 'quantized_images' else args.data.latent_dim,
-        num_categories=args.data.num_categories, 
+        num_categories=args.data.num_categories if tokenizer is None else len(tokenizer), 
         num_timesteps=args.data.num_timesteps,
         **OmegaConf.to_object(args.model) # type: ignore
     )
@@ -182,6 +187,7 @@ if __name__ == '__main__':
         eval_freq=args.eval.freq,
         num_trajectories=args.eval.num_trajectories,
         num_translations=args.eval.num_translations,
+        dtype=torch.bfloat16 if args.train.low_precision else torch.float32,
     )
 
     trainer.train(

@@ -266,8 +266,8 @@ def visualize_trajectory_toy(
     if use_legend:
         ax.legend(loc="upper left")
 
-    # ax.set_xlim([-2, 52])
-    # ax.set_ylim([-2, 52])
+    ax.set_xlim([-2, 52])
+    ax.set_ylim([-2, 52])
     plt.show()
     
     fig.tight_layout(pad=0.5)
