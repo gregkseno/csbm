@@ -319,8 +319,8 @@ class СSBMTrainer:
             self.fids[fb].reset()
         elif self.exp_type == 'texts':
             # self.accuracy[fb].reset()
-            self.edit_distances[fb].reset()
             # self.gen_ppls[fb].reset()
+            self.edit_distances[fb].reset()            
         else:
             raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
         self.models[fb].eval()
@@ -350,7 +350,7 @@ class СSBMTrainer:
                     pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu()) 
                     test_x_start = self.tokenizer.batch_decode(test_x_start.cpu())
                     # self.accuracy[fb].update(pred_x_start)
-                    self.gen_ppls[fb].update(pred_x_start)
+                    # self.gen_ppls[fb].update(pred_x_start)
                     self.edit_distances[fb].update(pred_x_start, test_x_start)
                 else:
                     raise NotImplementedError(f"Unknown exp type {self.exp_type}!")

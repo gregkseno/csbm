@@ -132,7 +132,7 @@ class ClassifierAccuracy(Metric):
 
     def __init__(self, fb: Literal['forward', 'backward'], cls_path: str = '', **kwargs):
         super().__init__(**kwargs)
-        self.classifier = 
+        self.classifier = ...
         self.fb = fb
         self.register_buffer("predictions", torch.zeros(0))
         self.register_buffer("targets", torch.zeros(0))
@@ -141,7 +141,7 @@ class ClassifierAccuracy(Metric):
         """Update the metric with text inputs."""
         # Handle predictions
         with torch.no_grad():
-            probs = self.classifier(texts)
+            probs = self.classifier(texts) # type: ignore
             predictions = (probs >= 0.5).long()  # Binary classification threshold
         self.predictions = torch.cat([self.predictions, predictions], dim=0)
         
