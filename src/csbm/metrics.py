@@ -15,7 +15,8 @@ from transformers import (
     CLIPImageProcessor, 
     CLIPVisionModelWithProjection, 
     AutoModelForCausalLM, 
-    AutoTokenizer
+    AutoTokenizer,
+    pipeline
 )
 
 FID_WEIGHTS_URL = 'https://github.com/mseitzer/pytorch-fid/releases/download/fid_weights/pt_inception-2015-12-05-6726825d.pth'  # noqa: E501
@@ -130,9 +131,14 @@ class GenerativePerplexity(Perplexity):
 class ClassifierAccuracy(Metric):
     """Classifier accuracy metric."""
 
-    def __init__(self, fb: Literal['forward', 'backward'], cls_path: str = '', **kwargs):
+    def __init__(
+        self, 
+        fb: Literal['forward', 'backward'], 
+        cls_model: str = 'arpitk/product-review-sentiment-analyzer', 
+        **kwargs
+    ):
         super().__init__(**kwargs)
-        self.classifier = ...
+        self.classifier = pipeline(model=cls_model, binary_output=True)
         self.fb = fb
         self.register_buffer("predictions", torch.zeros(0))
         self.register_buffer("targets", torch.zeros(0))
@@ -140,9 +146,14 @@ class ClassifierAccuracy(Metric):
     def update(self, texts: Union[str, List[str]]):
         """Update the metric with text inputs."""
         # Handle predictions
-        with torch.no_grad():
-            probs = self.classifier(texts) # type: ignore
-            predictions = (probs >= 0.5).long()  # Binary classification threshold
+        predictions = []
+        outputs = self.classifier(texts) 
+        assert outputs is not None, "Classifier outputs are None!"   
+             
+        for out in outputs: 
+            prediction = 0 if out['label'] == 'LABEL_0' else 1 # type: ignore
+            predictions.append(prediction)
+        predictions = torch.tensor(predictions, device=self.predictions.device).long()
         self.predictions = torch.cat([self.predictions, predictions], dim=0)
         
         # Handle targets
