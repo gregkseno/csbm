@@ -1,8 +1,8 @@
 data:
   type: texts # choices: "toy", "images", "quantized_images", "texts"
   dataset: yelp
-  dim: 128
-  num_categories: 8096
+  dim: 45
+  num_categories: 8192
   num_timesteps: 100
   num_skip_steps: 1
   coupling_type: independent # choices: "independent", "prior"
@@ -20,7 +20,7 @@ model: # TODO
     dropout: 0.1
     tie_word_embeddings: False
 tokenizer:
-  path: checkpoints/tokenizer-yelp.json
+  path: checkpoints/tokenizer_yelp.json
 prior:
   alpha: 0.002
   type: uniform # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"

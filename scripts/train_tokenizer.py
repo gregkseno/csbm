@@ -4,7 +4,7 @@ import sys
 from omegaconf import OmegaConf
 
 from tokenizers import Tokenizer
-from tokenizers import models, pre_tokenizers, decoders, trainers
+from tokenizers import models, pre_tokenizers, decoders, trainers, processors
 
 sys.path.append('src')
 from csbm.data import YelpDataset
@@ -20,7 +20,7 @@ if __name__ == '__main__':
     args = OmegaConf.load(args.config)
 
     # Load the dataset for training the tokenizer
-    dataset = YelpDataset(sentiment='all', data_dir=data_dir, split=1.0)
+    dataset = YelpDataset(sentiment='all', data_dir=data_dir, split='all')
     print(f"Loaded dataset with {len(dataset)} samples.")
     print(dataset[0])
 
@@ -29,6 +29,12 @@ if __name__ == '__main__':
     tokenizer = Tokenizer(models.Unigram()) # type: ignore
     tokenizer.pre_tokenizer = pre_tokenizers.Metaspace() # type: ignore
     tokenizer.decoder = decoders.Metaspace() # type: ignore
+    tokenizer.post_processor = processors.TemplateProcessing(
+        single="<s> $A",
+        special_tokens=[
+            ("<s>", 2),
+        ],
+    ) # type: ignore
 
     trainer = trainers.UnigramTrainer(
         vocab_size=args.data.num_categories, 
@@ -36,10 +42,10 @@ if __name__ == '__main__':
         unk_token="<unk>",
         show_progress=True,
     )
-    # print("Training tokenizer...")
-    # tokenizer.train_from_iterator(
-    #     (str(x) for x in dataset),
-    #     trainer=trainer,
-    # )
+    print("Training tokenizer...")
+    tokenizer.train_from_iterator(
+        (str(x) for x in dataset),
+        trainer=trainer,
+    )
     
-    # tokenizer.save("checkpoints/tokenizer-yelp.json")
+    tokenizer.save(args.tokenizer.path)
