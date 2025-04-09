@@ -372,14 +372,15 @@ class YelpDataset(BaseDataset):
         data_dir: str, 
         tokenizer: Optional[PreTrainedTokenizerFast] = None,
         max_length: Optional[int] = None,
-        split: float = 0.8,
-        train: bool = True,
+        split: Literal['train', 'eval', 'test', 'all'] = 'train',
     ):
         self.sentiment = sentiment
-        self.train = train
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.file_path = os.path.join(data_dir, 'yelp', 'yelp_academic_dataset_review.json')
+        if tokenizer is not None:
+            assert max_length is not None, 'max_length should be set if tokenizer is set!'
+
+        self.file_path = os.path.join(data_dir, 'yelp', f'yelp_small_{split}.json')
         
         self.file_positions = []
         with open(self.file_path, 'r') as f:
@@ -394,12 +395,6 @@ class YelpDataset(BaseDataset):
                 elif sentiment == 'all':
                     self.file_positions.append(pos)
                 pos, line = f.tell(), f.readline()
-        
-        split_idx = int(len(self.file_positions) * split)
-        if train:
-            self.file_positions = self.file_positions[:split_idx]
-        else:
-            self.file_positions = self.file_positions[split_idx:]
     
     def __len__(self):
         return len(self.file_positions)
@@ -411,8 +406,7 @@ class YelpDataset(BaseDataset):
             line = f.readline()
             data = json.loads(line)
             text = data['text']
-            if self.tokenizer is not None:
-                text = self.tokenizer.bos_token + text
+
         if self.tokenizer is not None:
             text = self.tokenizer.encode(
                 text=text, 
