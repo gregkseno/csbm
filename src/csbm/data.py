@@ -663,7 +663,7 @@ class Prior(nn.Module):
         log_probs = torch.log(p_start_t + self.eps) + torch.log(p_t_end + self.eps)
         log_probs = log_probs - log_probs.logsumexp(dim=-1, keepdim=True)
         
-        noise = torch.rand_like(log_probs, dtype=x_start.dtype)
+        noise = torch.rand_like(log_probs)
         noise = torch.clamp(noise, min=torch.finfo(noise.dtype).tiny, max=1.)
         gumbel_noise = -torch.log(-torch.log(noise))
         x_t = torch.argmax(log_probs + gumbel_noise, dim=-1)

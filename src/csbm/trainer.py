@@ -55,7 +55,6 @@ class СSBMTrainer:
         eval_freq: int = 1000,
         num_trajectories: int = 4,
         num_translations: int = 5,
-        dtype: torch.dtype = torch.float32,
     ) -> None:
         assert kl_loss_coeff > 0 or ce_loss_coeff > 0 or mse_loss_coeff > 0, 'At least one loss coefficents must be greater than zero!'
 
@@ -66,15 +65,15 @@ class СSBMTrainer:
 
         self.accelerator = accelerator
         self.models = {
-            'forward': forward_model.to(dtype=dtype),
-            'backward': backward_model.to(dtype=dtype)
+            'forward': forward_model,
+            'backward': backward_model
         }
         self.emas = {
             'forward': EMA(forward_model.parameters(), decay=ema_decay),
             'backward': EMA(backward_model.parameters(), decay=ema_decay)
         }
-        self.prior = prior.to(dtype=dtype)
-        self.codec = codec.to(dtype=dtype) if codec is not None else codec
+        self.prior = prior
+        self.codec = codec
         self.tokenizer = tokenizer
         self.optimizers = {
             'forward': forward_optimizer,
@@ -104,12 +103,12 @@ class СSBMTrainer:
                     feature=2048, 
                     reset_real_features=False, 
                     normalize=self.is_generation_normalized
-                ).to(self.accelerator.device, dtype=dtype),
+                ).to(self.accelerator.device),
                 'backward': FID(
                     feature=2048, 
                     reset_real_features=False, 
                     normalize=self.is_generation_normalized
-                ).to(self.accelerator.device, dtype=dtype)
+                ).to(self.accelerator.device)
             }
         elif exp_type == 'texts':
             # self.accuracy = {

@@ -117,6 +117,8 @@ if __name__ == '__main__':
         prior_type=args.prior.type,
         centroids=codec.centroids if codec is not None and args.prior.type == 'centroid_gaussian' else None
     )
+    if args.train.low_precision:
+        prior = prior.bfloat16()
 
     accelerator.print('Loading models...')
     if args.data.type == 'toy':
@@ -187,7 +189,6 @@ if __name__ == '__main__':
         eval_freq=args.eval.freq,
         num_trajectories=args.eval.num_trajectories,
         num_translations=args.eval.num_translations,
-        dtype=torch.bfloat16 if args.train.low_precision else torch.float32,
     )
 
     trainer.train(
