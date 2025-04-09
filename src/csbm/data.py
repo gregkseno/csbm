@@ -471,13 +471,13 @@ class CouplingDataset(BaseDataset):
 #         Priors        #
 #########################
 def get_cum_matrices(onestep_matrices: torch.Tensor) -> torch.Tensor:
-    matrix = onestep_matrices[0]
-    cum_matrices = [matrix]
-    for timestep in range(1, onestep_matrices.shape[0]):
-        matrix = matrix @ onestep_matrices[timestep]
-        cum_matrices.append(matrix)
-    cum_matrices = torch.stack(cum_matrices, dim=0)
-
+    n = onestep_matrices.shape[0]
+    cum_matrices = torch.empty_like(onestep_matrices)
+    cum_matrices[0] = onestep_matrices[0]
+    
+    for timestep in range(1, n):
+        cum_matrices[timestep] = cum_matrices[timestep-1] @ onestep_matrices[timestep]
+    
     assert onestep_matrices.shape == cum_matrices.shape, f'Wrong shape!'
     return cum_matrices
     
@@ -603,7 +603,8 @@ class Prior(nn.Module):
             'von_mises',
         ] = 'uniform',
         centroids: Optional[torch.Tensor] = None,
-        eps: float = 1e-20
+        eps: float = 1e-20,
+        dtype: torch.dtype = torch.float32
     ) -> None:
         super().__init__()
         self.num_categories = num_categories
@@ -611,6 +612,8 @@ class Prior(nn.Module):
         self.num_skip_steps = num_skip_steps
         self.eps = eps
         self.prior_type = prior_type
+        self.dtype = dtype
+
         if prior_type == 'gaussian':
             p_onestep, p_cum = gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps)
         elif prior_type == 'von_mises':
@@ -621,8 +624,8 @@ class Prior(nn.Module):
             p_onestep, p_cum = centroid_gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps, centroids)
         else:
             raise NotImplementedError(f'Got unknown prior: {prior_type} or centroids is None!')
-        self.register_buffer("p_onestep", p_onestep.to(dtype=torch.float32))
-        self.register_buffer("p_cum", p_cum.to(dtype=torch.float32))
+        self.register_buffer("p_onestep", p_onestep.to(dtype=dtype))
+        self.register_buffer("p_cum", p_cum.to(dtype=dtype))
         
     def extract(
         self, 
@@ -685,7 +688,7 @@ class Prior(nn.Module):
         else:
             x_start_logits = x_start.clone()
         assert x_start_logits.shape == x_t.shape + (self.num_categories,), f"x_start_logits.shape: {x_start_logits.shape}, x_t.shape: {x_t.shape}"
-        
+        x_start_logits = x_start_logits.to(self.dtype)
         # fact1 is "guess of x_{t}" from x_{t-1}
         fact1 = self.extract('onestep', t, row_id=x_t)
 

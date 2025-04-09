@@ -102,11 +102,14 @@ if __name__ == '__main__':
             raise NotImplementedError(f"Unknown exp type {args.data.type}!")
 
     codec = None
+    centroids = None
     if args.data.type == 'quantized_images':
         codec = Codec(
             config_path=args.codec.config_path,
             ckpt_path=args.codec.ckpt_path,     
         )
+        if args.prior.type == 'centroid_gaussian':
+            centroids = codec.centroids
 
     accelerator.print('Loading prior...')
     prior = Prior(
@@ -115,7 +118,8 @@ if __name__ == '__main__':
         num_timesteps=args.data.num_timesteps, 
         num_skip_steps=args.data.num_skip_steps, 
         prior_type=args.prior.type,
-        centroids=codec.centroids if codec is not None and args.prior.type == 'centroid_gaussian' else None
+        centroids=centroids if centroids is not None else None,
+        dtype=torch.bfloat16 if args.train.low_precision else torch.float32,
     )
     if args.train.low_precision:
         prior = prior.bfloat16()
