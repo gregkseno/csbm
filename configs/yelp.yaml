@@ -50,6 +50,6 @@ train:
   #     warmup: 10000
 eval:
   freq: 1000
-  num_samples: 1 # Want to sample 1 text
+  num_samples: 32 # Want to sample 1 text
   num_trajectories: 1 # Does not work for text
   num_translations: 1 # Does not work for text

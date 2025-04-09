@@ -20,7 +20,7 @@ from csbm.models.images import ImageD3PM
 from csbm.models.texts import TextD3PM
 
 from csbm.data import BaseDataset, CouplingDataset, Prior
-from csbm.metrics import FID, BLEUScore # ClassifierAccuracy
+from csbm.metrics import FID, GenerativePerplexity, EditDistance # ClassifierAccuracy
 from csbm.utils import visualize, visualize_trajectory
 from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 
@@ -115,9 +115,17 @@ class СSBMTrainer:
             #     'forward': ClassifierAccuracy(fb='forward').to(self.accelerator.device),
             #     'backward': ClassifierAccuracy(fb='backward').to(self.accelerator.device)
             # }
-            self.bleu = {
-                'forward': BLEUScore(),
-                'backward': BLEUScore()
+            # self.gen_ppls = {
+            #     'forward': GenerativePerplexity(
+            #         max_length=forward_model.input_dim, 
+            #     ).to(self.accelerator.device),
+            #     'backward': GenerativePerplexity(
+            #         max_length=backward_model.input_dim, 
+            #     ).to(self.accelerator.device)
+            # }
+            self.edit_distances = {
+                'forward': EditDistance(),
+                'backward': EditDistance()
             }
         
         self.eval_freq = eval_freq
@@ -130,14 +138,11 @@ class СSBMTrainer:
         pred_q_posterior_logits: Any,
     ) -> torch.Tensor:        
         """KL-divergence calculation."""    
-        if self.exp_type == 'toy' or self.exp_type == 'images' or self.exp_type == 'quantized_images':
-            kl_loss = torch.softmax(true_q_posterior_logits, dim=-1) * (
-                torch.log_softmax(true_q_posterior_logits, dim=-1)
-                - torch.log_softmax(pred_q_posterior_logits, dim=-1)
-            )
-            kl_loss = kl_loss.sum(dim=-1).mean()
-        else:
-            raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
+        kl_loss = torch.softmax(true_q_posterior_logits, dim=-1) * (
+            torch.log_softmax(true_q_posterior_logits, dim=-1)
+            - torch.log_softmax(pred_q_posterior_logits, dim=-1)
+        )
+        kl_loss = kl_loss.sum(dim=-1).mean()
         return kl_loss
     
     def ce_loss(
@@ -146,12 +151,9 @@ class СSBMTrainer:
         pred_x_start_logits: Any, 
     ) -> torch.Tensor:   
         """Cross-Entropy calculation."""         
-        if self.exp_type == 'toy' or self.exp_type == 'images' or self.exp_type == 'quantized_images' or self.exp_type == 'texts':
-            pred_x_start_logits = pred_x_start_logits.flatten(start_dim=0, end_dim=-2)
-            true_x_start = true_x_start.flatten(start_dim=0, end_dim=-1)
-            ce_loss = F.cross_entropy(pred_x_start_logits, true_x_start, ignore_index=self.ignore_index)
-        else:
-            raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
+        pred_x_start_logits = pred_x_start_logits.flatten(start_dim=0, end_dim=-2)
+        true_x_start = true_x_start.flatten(start_dim=0, end_dim=-1)
+        ce_loss = F.cross_entropy(pred_x_start_logits, true_x_start, ignore_index=self.ignore_index)
         return ce_loss
 
     def markovian_projection(
@@ -252,8 +254,8 @@ class СSBMTrainer:
                 pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu(), skip_special_tokens=True) 
                 test_x_end = self.tokenizer.batch_decode(test_x_end.cpu(), skip_special_tokens=True)
                 self.accelerator.log(
-                    {f'{fb}_text': pred_x_start[0],
-                     f'{fb}_text': test_x_end[0]}, 
+                    {f'{fb}_generated_text': pred_x_start[:5],
+                     f'{fb}_initial_text': test_x_end[:5]}, 
                     step=step
                 )
                 return # Just skip the rest part for texts
@@ -317,7 +319,8 @@ class СSBMTrainer:
             self.fids[fb].reset()
         elif self.exp_type == 'texts':
             # self.accuracy[fb].reset()
-            self.bleu[fb].reset()
+            self.edit_distances[fb].reset()
+            # self.gen_ppls[fb].reset()
         else:
             raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
         self.models[fb].eval()
@@ -347,7 +350,8 @@ class СSBMTrainer:
                     pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu()) 
                     test_x_start = self.tokenizer.batch_decode(test_x_start.cpu())
                     # self.accuracy[fb].update(pred_x_start)
-                    self.bleu[fb].update(pred_x_start, test_x_start)
+                    self.gen_ppls[fb].update(pred_x_start)
+                    self.edit_distances[fb].update(pred_x_start, test_x_start)
                 else:
                     raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
 
@@ -355,8 +359,9 @@ class СSBMTrainer:
             self.accelerator.log({f'{fb}_fid': self.fids[fb].compute().detach()}, step=step)
         elif self.exp_type == 'texts':
             self.accelerator.log(
-                {#f'{fb}_accuracy': self.accuracy[fb].compute().detach(), 
-                 f'{fb}_bleu': self.bleu[fb].compute().detach()}, 
+                {# f'{fb}_accuracy': self.accuracy[fb].compute().detach(), 
+                 # f'{fb}_gen_ppl': self.gen_ppls[fb].compute().detach(),
+                 f'{fb}_edit_distance': self.edit_distances[fb].compute().detach()}, 
                 step=step
             )
         else:
