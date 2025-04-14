@@ -18,7 +18,7 @@ import json
 from tqdm.auto import tqdm
 tqdm.pandas()
 
-from csbm.utils import broadcast, convert_to_numpy
+from csbm.utils import broadcast, convert_to_numpy, convert_to_torch
 
 #########################
 #       MARGINALS       #
@@ -474,7 +474,38 @@ def get_cum_matrices(onestep_matrices: torch.Tensor) -> torch.Tensor:
     
     assert onestep_matrices.shape == cum_matrices.shape, f'Wrong shape!'
     return cum_matrices
+
+
+def get_matrices(
+        last_p_mat: np.ndarray,
+        num_timesteps: int,
+        schedule_type: Literal['linear', 'cosine'] = 'linear',
+) -> Tuple[np.ndarray, np.ndarray]:
+    num_categories = last_p_mat.shape[0]
+    first_p_mat = np.eye(num_categories, dtype=last_p_mat.dtype)
+
+    if schedule_type == 'linear':
+        alphas = np.linspace(0, 1, num_timesteps + 2)
+    elif schedule_type == 'cosine':
+        alphas = np.cos(np.linspace(0, np.pi / 2, num_timesteps + 2))**2
+    else:
+        raise NotImplementedError(f'Got unknown schedule type: {schedule_type}')
     
+    # Getting the onestep matrices
+    p_onestep_mats = np.empty((num_timesteps + 2, num_categories, num_categories), dtype=last_p_mat.dtype)
+    for t in range(num_timesteps + 2):
+        alpha_t = alphas[t]
+        p_onestep_mats[t] = (1 - alpha_t) * first_p_mat + alpha_t * last_p_mat
+    
+    # Getting the cumulative matrices
+    betas = np.cumprod(1 - alphas, axis=0)
+    p_cum_mats = np.empty((num_timesteps + 2, num_categories, num_categories), dtype=last_p_mat.dtype)
+    for t in range(num_timesteps + 2):
+        beta_t = betas[t]
+        p_cum_mats[t] = beta_t * first_p_mat + (1 - beta_t) * last_p_mat
+
+    return p_onestep_mats, p_cum_mats
+
 def uniform_prior(
     alpha: float, 
     num_categories: int, 
@@ -491,14 +522,33 @@ def uniform_prior(
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats[1].transpose(0, 1), p_cum_mats
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
+
+
+def special_uniform_prior(
+    alpha: float, 
+    num_categories: int, 
+    num_timesteps: int,
+    num_skip_steps: int,
+    schedule_type: Literal['linear', 'cosine'] = 'linear'
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    last_p_mat = np.full(shape=(num_categories, num_categories), fill_value=(alpha / (num_categories - 1)), dtype=np.float32)
+    last_p_mat -= np.diag(np.diag(last_p_mat))
+    last_p_mat += np.diag(np.full(shape=(num_categories,), fill_value=(1 - alpha), dtype=np.float32))
+    
+    p_onestep_mats, p_cum_mats = get_matrices(
+        last_p_mat, num_timesteps, schedule_type=schedule_type
+    )
+    p_onestep_mats, p_cum_mats = convert_to_torch(p_onestep_mats), convert_to_torch(p_cum_mats)
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
+
 
 def von_mises_prior(
     alpha: float,
     num_categories: int, 
     num_timesteps: int,
     num_skip_steps: int
-):
+) -> Tuple[torch.Tensor, torch.Tensor]:
     angles = np.linspace(0, 2 * np.pi, num_categories, endpoint=False)
     p_onestep_mats = np.zeros((num_categories, num_categories))
 
@@ -513,46 +563,102 @@ def von_mises_prior(
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats[1].transpose(0, 1), p_cum_mats
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
+
+
+def special_von_mises_prior(
+    alpha: float,
+    num_categories: int, 
+    num_timesteps: int,
+    num_skip_steps: int,
+    schedule_type: Literal['linear', 'cosine'] = 'linear'
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    angles = np.linspace(0, 2 * np.pi, num_categories, endpoint=False)
+    last_p_mat = np.zeros((num_categories, num_categories), dtype=np.float32)
+    for i, current_angle in enumerate(angles):
+        for j, next_angle in enumerate(angles):
+            last_p_mat[i, j] = np.exp((1 / (alpha**2 * (num_categories - 1)**2)) * np.cos(next_angle - current_angle))
+        last_p_mat[i] /= np.sum(last_p_mat[i])
+    
+    p_onestep_mats, p_cum_mats = get_matrices(
+        last_p_mat, num_timesteps, schedule_type=schedule_type
+    )
+    p_onestep_mats, p_cum_mats = convert_to_torch(p_onestep_mats), convert_to_torch(p_cum_mats)
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
+
 
 def gaussian_prior(
     alpha: float,
     num_categories: int, 
     num_timesteps: int, 
     num_skip_steps: int,
-    use_doubly_stochastic: bool = True
-):
+    use_doubly_stochastic: bool = False
+) -> Tuple[torch.Tensor, torch.Tensor]:
     p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float32)
+
+    max_distance = num_categories - 1
     indices = np.arange(num_categories)[None, ...]
-    values = -4 * (indices - indices.T)**2 / (alpha**2 * (num_categories - 1)**2)
+    values = -4 * (indices - indices.T)**2 / (alpha * max_distance)**2
 
     if not use_doubly_stochastic:
         p_onestep_mats = softmax(values, axis=1)
-    else:
-        norm_const = -4 * np.arange(
-            start=-(num_categories-1), 
-            stop=(num_categories+1), 
-            step=1, 
-            dtype=np.float32
-        ) ** 2
-        norm_const /= (alpha**2 * (num_categories - 1)**2)
+    else: # this logic mathcing D3PM article
+        norm_const = np.exp(-4 * np.arange(
+            max_distance, max_distance, step=1, dtype=np.float32
+        ) ** 2 / (alpha * max_distance)**2).sum()
         for i in range(num_categories):
             for j in range(num_categories):
                 if i == j:
                     continue
-                value = -(4 * (i - j)** 2) / (alpha**2 * (num_categories - 1)**2)
-                p_onestep_mats[i][j] = np.exp(value) / np.exp(norm_const).sum()
-
+                value = np.exp(-(4 * (i - j)** 2) / (alpha * max_distance)**2)
+                p_onestep_mats[i][j] = value / norm_const
         for i in range(num_categories):
             p_onestep_mats[i][i] = 1 - p_onestep_mats[i].sum() 
-    p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
 
+    p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
     p_onestep_mats = torch.from_numpy(p_onestep_mats) # .softmax(dim=1)
     p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats[1].transpose(0, 1), p_cum_mats
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
+
+
+def special_gaussian_prior(
+    alpha: float,
+    num_categories: int, 
+    num_timesteps: int, 
+    num_skip_steps: int,
+    use_doubly_stochastic: bool = False,
+    schedule_type: Literal['linear', 'cosine'] = 'linear'
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    last_p_mat = np.zeros([num_categories, num_categories], dtype=np.float32)
+
+    max_distance = num_categories - 1
+    indices = np.arange(num_categories)[None, ...]
+    values = -4 * (indices - indices.T)**2 / (alpha * max_distance)**2
+
+    if not use_doubly_stochastic:
+        last_p_mat = softmax(values, axis=1)
+    else: # this logic mathcing D3PM article
+        norm_const = np.exp(-4 * np.arange(
+            max_distance, max_distance, step=1, dtype=np.float32
+        ) ** 2 / (alpha * max_distance)**2).sum()
+        for i in range(num_categories):
+            for j in range(num_categories):
+                if i == j:
+                    continue
+                value = np.exp(-(4 * (i - j)** 2) / (alpha * max_distance)**2)
+                last_p_mat[i][j] = value / norm_const
+        for i in range(num_categories):
+            last_p_mat[i][i] = 1 - last_p_mat[i].sum() 
+
+    p_onestep_mats, p_cum_mats = get_matrices(
+        last_p_mat, num_timesteps, schedule_type=schedule_type
+    )
+    p_onestep_mats, p_cum_mats = convert_to_torch(p_onestep_mats), convert_to_torch(p_cum_mats)
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
+
 
 def centroid_gaussian_prior(
     alpha: float,
@@ -560,18 +666,39 @@ def centroid_gaussian_prior(
     num_timesteps: int, 
     num_skip_steps: int,
     centroids: torch.Tensor | np.ndarray # num_categories x seq_length
-):
+) -> Tuple[torch.Tensor, torch.Tensor]:
     centroids = convert_to_numpy(centroids)
     distances = cdist(centroids, centroids, metric='euclidean')  # num_categories x num_categories
-    p_onestep_mats = softmax(-distances / (alpha**2 * (num_categories - 1)**2), axis=1)
+    max_distance = distances.max()
+
+    p_onestep_mats = softmax(-distances / (alpha * max_distance)**2, axis=1)
     p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
 
-    p_onestep_mats = torch.from_numpy(p_onestep_mats) # .softmax(dim=1)
+    p_onestep_mats = torch.from_numpy(p_onestep_mats) 
     p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
     p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
     p_cum_mats = get_cum_matrices(p_onestep_mats)
 
-    return p_onestep_mats[1].transpose(0, 1), p_cum_mats
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
+
+def special_centroid_gaussian_prior(
+    alpha: float,
+    num_categories: int,
+    num_timesteps: int, 
+    num_skip_steps: int,
+    centroids: torch.Tensor | np.ndarray, # num_categories x seq_length
+    schedule_type: Literal['linear', 'cosine'] = 'linear'
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    centroids = convert_to_numpy(centroids)
+    distances = cdist(centroids, centroids, metric='euclidean')  # num_categories x num_categories
+    max_distance = distances.max()
+    last_p_mat = softmax(-distances / (alpha * max_distance)**2, axis=1)
+
+    p_onestep_mats, p_cum_mats = get_matrices(
+        last_p_mat, num_timesteps, schedule_type=schedule_type
+    )
+    p_onestep_mats, p_cum_mats = convert_to_torch(p_onestep_mats), convert_to_torch(p_cum_mats)
+    return p_onestep_mats.transpose(1, 2), p_cum_mats
 
 
 # Cumulative returns with following pattern
@@ -609,13 +736,13 @@ class Prior(nn.Module):
         self.dtype = dtype
 
         if prior_type == 'gaussian':
-            p_onestep, p_cum = gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps)
+            p_onestep, p_cum = special_gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps)
         elif prior_type == 'von_mises':
-            p_onestep, p_cum = von_mises_prior(alpha, num_categories, num_timesteps, num_skip_steps)
+            p_onestep, p_cum = special_von_mises_prior(alpha, num_categories, num_timesteps, num_skip_steps)
         elif prior_type == 'uniform':
-            p_onestep, p_cum = uniform_prior(alpha, num_categories, num_timesteps, num_skip_steps)
+            p_onestep, p_cum = special_uniform_prior(alpha, num_categories, num_timesteps, num_skip_steps)
         elif prior_type == 'centroid_gaussian' and centroids is not None:
-            p_onestep, p_cum = centroid_gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps, centroids)
+            p_onestep, p_cum = special_centroid_gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps, centroids)
         else:
             raise NotImplementedError(f'Got unknown prior: {prior_type} or centroids is None!')
         self.register_buffer("p_onestep", p_onestep.to(dtype=dtype))
@@ -632,21 +759,24 @@ class Prior(nn.Module):
         """Extracts row/column/element from transition matrix."""     
         if row_id is not None and column_id is not None:
             if mat_type  == 'onestep':
-                return self.p_onestep[row_id, column_id]
+                t = broadcast(t, row_id.dim() - 1)
+                return self.p_onestep[t, row_id, column_id]
             else: 
                 t = broadcast(t, row_id.dim() - 1)
                 return self.p_cum[t, row_id, column_id]
             
         elif row_id is not None and column_id is None:
             if mat_type  == 'onestep':
-                return self.p_onestep[row_id]
+                t = broadcast(t, row_id.dim() - 1)
+                return self.p_onestep[t, row_id]
             else: 
                 t = broadcast(t, row_id.dim() - 1)
-                return self.p_cum[t, row_id]
+                return self.p_cum[t, row_id, :]
         
         elif row_id is None and column_id is not None:
             if mat_type  == 'onestep':
-                return self.p_onestep[:, column_id]
+                t = broadcast(t, column_id.dim() - 1)
+                return self.p_onestep[t, :, column_id]
             else:
                 t = broadcast(t, column_id.dim() - 1)
                 return self.p_cum[t, :, column_id]
