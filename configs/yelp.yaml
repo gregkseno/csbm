@@ -1,13 +1,13 @@
 data:
   type: texts # choices: "toy", "images", "quantized_images", "texts"
   dataset: yelp
-  dim: 45
+  dim: 55
   num_categories: 8192
   num_timesteps: 100
   num_skip_steps: 1
   coupling_type: independent # choices: "independent", "prior"
-  train_test_split: 0.8
-model: # TODO
+  train_test_split: null # does nothing for YelpDataset
+model:
   config:
     name: small
     type: ddit
@@ -22,7 +22,7 @@ model: # TODO
 tokenizer:
   path: checkpoints/tokenizer_yelp.json
 prior:
-  alpha: 0.002
+  alpha: 0.01
   type: uniform # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"
 train:
   batch_size: 32
@@ -31,7 +31,7 @@ train:
   iterations: 20
   prior_iterations: 20
   inner_iterations: 20000
-  use_mini_batch: true
+  use_mini_batch: false
   ce_loss_coeff: 0.001
   kl_loss_coeff: 1
   mse_loss_coeff: 0
@@ -50,6 +50,6 @@ train:
   #     warmup: 10000
 eval:
   freq: 1000
-  num_samples: 32 # Want to sample 1 text
-  num_trajectories: 1 # Does not work for text
-  num_translations: 1 # Does not work for text
+  num_samples: 32
+  num_trajectories: 1 # Does not work for texts
+  num_translations: 1 # Does not work for texts
