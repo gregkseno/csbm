@@ -3,8 +3,9 @@ from omegaconf.dictconfig import DictConfig
 from omegaconf.listconfig import ListConfig
 
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, List, Literal, Optional, Tuple
 
+import json
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -73,6 +74,8 @@ def visualize(
         vis_func = visualize_toy
     elif exp_type == 'images' or exp_type == 'quantized_images':
         vis_func = visualize_images
+    elif exp_type == 'texts':
+        vis_func = visualize_texts
     else:
         raise NotImplementedError(f"Unknown exp type {exp_type}!")
     vis_func(
@@ -178,6 +181,35 @@ def visualize_images(
 
     plt.close()
 
+def visualize_texts(
+    x_end: List[str], 
+    x_start: List[str], 
+    pred_x_start: List[str], 
+    fb: Literal['forward', 'backward'],
+    labels: Optional[List[str]] = [r'$p_0$', r'$p_1$', r'$p_{\theta}$'],
+    iteration: Optional[int] = None, 
+    exp_path: Optional[str] = None, 
+    tracker: Optional[GeneralTracker] = None,
+    step: Optional[int] = None
+):
+    sample_triplets = list(zip(x_end, pred_x_start, x_start))
+    if exp_path is not None:
+        jsonl_path = os.path.join(exp_path, 'samples', f'samples_{fb}_{iteration}_step_{step}.jsonl')
+        if not os.path.isfile(jsonl_path):
+            with open(jsonl_path, 'w') as f:
+                for init, generated, example in sample_triplets:
+                    sample = {
+                        "initial": init,
+                        "generated": generated,
+                        "example": example,
+                    }
+                    f.write(json.dumps(sample) + '\n')
+                    
+    if tracker:
+        table = wandb.Table(columns=["Initial text", "Generated text", "Example text"])
+        for init, generated, example in sample_triplets:
+            table.add_data(init, generated, example)
+        tracker.log({f'{fb}_text_samples': table}, step=step)
 
 def visualize_trajectory(
     exp_type: Literal['toy', 'images', 'quantized_images', 'texts'],
@@ -266,8 +298,8 @@ def visualize_trajectory_toy(
     if use_legend:
         ax.legend(loc="upper left")
 
-    ax.set_xlim([-2, 52])
-    ax.set_ylim([-2, 52])
+    # ax.set_xlim([-2, 52])
+    # ax.set_ylim([-2, 52])
     plt.show()
     
     fig.tight_layout(pad=0.5)
