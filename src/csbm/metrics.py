@@ -16,7 +16,7 @@ from transformers import (
     CLIPVisionModelWithProjection, 
     AutoModelForCausalLM, 
     AutoTokenizer,
-    pipeline
+    AutoModelForSequenceClassification
 )
 
 FID_WEIGHTS_URL = 'https://github.com/mseitzer/pytorch-fid/releases/download/fid_weights/pt_inception-2015-12-05-6726825d.pth'  # noqa: E501
@@ -138,7 +138,8 @@ class ClassifierAccuracy(Metric):
         **kwargs
     ):
         super().__init__(**kwargs)
-        self.classifier = pipeline(model=cls_model, binary_output=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(cls_model)
+        self.classifier = AutoModelForSequenceClassification.from_pretrained(cls_model)
         self.fb = fb
         self.register_buffer("predictions", torch.zeros(0))
         self.register_buffer("targets", torch.zeros(0))
@@ -146,14 +147,13 @@ class ClassifierAccuracy(Metric):
     def update(self, texts: Union[str, List[str]]):
         """Update the metric with text inputs."""
         # Handle predictions
-        predictions = []
-        outputs = self.classifier(texts) 
-        assert outputs is not None, "Classifier outputs are None!"   
-             
-        for out in outputs: 
-            prediction = 0 if out['label'] == 'LABEL_0' else 1 # type: ignore
-            predictions.append(prediction)
-        predictions = torch.tensor(predictions, device=self.predictions.device).long()
+        inputs = self.tokenizer(texts, return_tensors="pt")
+        with torch.no_grad():
+            outputs = self.classifier(**inputs)
+        probabilities = torch.nn.functional.softmax(outputs.logits, dim=-1)
+        predictions = torch.argmax(probabilities, dim=-1).long()
+        assert predictions.shape[0] == len(texts), f"Predictions shape {predictions.shape} does not match texts shape {len(texts)}"
+        assert len(predictions.shape) == 1, f"Predictions shape {predictions.shape} is not 1D"
         self.predictions = torch.cat([self.predictions, predictions], dim=0)
         
         # Handle targets

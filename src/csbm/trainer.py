@@ -115,14 +115,14 @@ class СSBMTrainer:
                 'forward': ClassifierAccuracy(fb='forward').to(self.accelerator.device),
                 'backward': ClassifierAccuracy(fb='backward').to(self.accelerator.device)
             }
-            # self.gen_ppls = {
-            #     'forward': GenerativePerplexity(
-            #         max_length=forward_model.input_dim, 
-            #     ).to(self.accelerator.device),
-            #     'backward': GenerativePerplexity(
-            #         max_length=backward_model.input_dim, 
-            #     ).to(self.accelerator.device)
-            # }
+            self.gen_ppls = {
+                'forward': GenerativePerplexity(
+                    max_length=forward_model.input_dim, 
+                ).to(self.accelerator.device),
+                'backward': GenerativePerplexity(
+                    max_length=backward_model.input_dim, 
+                ).to(self.accelerator.device)
+            }
             self.edit_distances = {
                 'forward': EditDistance().to(self.accelerator.device),
                 'backward': EditDistance().to(self.accelerator.device)
@@ -251,22 +251,32 @@ class СSBMTrainer:
                 pred_x_start = self.models[fb].sample(test_x_end, self.prior)
 
             if self.exp_type == 'texts' and self.tokenizer is not None:
-                pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu(), skip_special_tokens=True) 
                 test_x_end = self.tokenizer.batch_decode(test_x_end.cpu(), skip_special_tokens=True)
-                self.accelerator.log(
-                    {f'{fb}_generated_text': pred_x_start[:5],
-                     f'{fb}_initial_text': test_x_end[:5]}, 
-                    step=step
-                )
-                return # Just skip the rest part for texts
-                
+                test_x_start = self.tokenizer.batch_decode(test_x_start.cpu(), skip_special_tokens=True)
+                pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu(), skip_special_tokens=True) 
+                          
+            visualize(
+                exp_type=self.exp_type, 
+                x_end=test_x_end, 
+                x_start=test_x_start, 
+                pred_x_start=pred_x_start, 
+                fb=fb, 
+                iteration=self.iteration, 
+                exp_path=self.exp_path, 
+                step=step,
+                tracker=self.accelerator.get_tracker("wandb")
+            )
+
+            if self.exp_type == 'texts':
+                return # Skip trajectory visualization for texts
+            
             if self.codec is not None:
                 traj_start = encoded_test_x_end[:self.num_trajectories]
             else:
                 traj_start = test_x_end[:self.num_trajectories]
-            repeats = [self.num_translations] + [1] * traj_start.dim()
-            trajectories = traj_start.unsqueeze(0).repeat(*repeats)
-            trajectories = trajectories.reshape(-1, *traj_start.shape[1:])
+            repeats = [self.num_translations] + [1] * traj_start.dim() # type: ignore
+            trajectories = traj_start.unsqueeze(0).repeat(*repeats) # type: ignore
+            trajectories = trajectories.reshape(-1, *traj_start.shape[1:]) # type: ignore
             trajectories = trajectories.to(self.accelerator.device)
             trajectories = self.models[fb].sample_trajectory(trajectories, self.prior)
 
@@ -282,21 +292,9 @@ class СSBMTrainer:
             )
 
             if self.codec is not None:
-                trajectories = self.codec.decode_to_image(trajectories.reshape(-1, *traj_start.shape[1:]))
-                trajectories = trajectories.reshape(-1, self.num_trajectories * self.num_translations, *pred_x_start.shape[1:])
+                trajectories = self.codec.decode_to_image(trajectories.reshape(-1, *traj_start.shape[1:])) # type: ignore
+                trajectories = trajectories.reshape(-1, self.num_trajectories * self.num_translations, *pred_x_start.shape[1:]) # type: ignore
 
-            
-            visualize(
-                exp_type=self.exp_type, 
-                x_end=test_x_end, 
-                x_start=test_x_start, 
-                pred_x_start=pred_x_start, 
-                fb=fb, 
-                iteration=self.iteration, 
-                exp_path=self.exp_path, 
-                step=step,
-                tracker=self.accelerator.get_tracker("wandb")
-            )
             visualize_trajectory(
                 exp_type=self.exp_type, 
                 pred_x_start=pred_x_start, # type: ignore
@@ -319,7 +317,7 @@ class СSBMTrainer:
             self.fids[fb].reset()
         elif self.exp_type == 'texts':
             self.accuracy[fb].reset()
-            # self.gen_ppls[fb].reset()
+            self.gen_ppls[fb].reset()
             self.edit_distances[fb].reset()            
         else:
             raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
@@ -350,7 +348,7 @@ class СSBMTrainer:
                     pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu()) 
                     test_x_start = self.tokenizer.batch_decode(test_x_start.cpu())
                     self.accuracy[fb].update(pred_x_start)
-                    # self.gen_ppls[fb].update(pred_x_start)
+                    self.gen_ppls[fb].update(pred_x_start)
                     self.edit_distances[fb].update(pred_x_start, test_x_start)
                 else:
                     raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
@@ -360,7 +358,7 @@ class СSBMTrainer:
         elif self.exp_type == 'texts':
             self.accelerator.log(
                 {f'{fb}_accuracy': self.accuracy[fb].compute().detach(), 
-                 # f'{fb}_gen_ppl': self.gen_ppls[fb].compute().detach(),
+                 f'{fb}_gen_ppl': self.gen_ppls[fb].compute().detach(),
                  f'{fb}_edit_distance': self.edit_distances[fb].compute().detach()}, 
                 step=step
             )
