@@ -464,15 +464,14 @@ class CouplingDataset(BaseDataset):
 #########################
 #         Priors        #
 #########################
-def get_cum_matrices(onestep_matrices: torch.Tensor) -> torch.Tensor:
-    n = onestep_matrices.shape[0]
-    cum_matrices = torch.empty_like(onestep_matrices)
-    cum_matrices[0] = onestep_matrices[0]
+def get_cum_matrices(num_timesteps: int, onestep_matrix: torch.Tensor) -> torch.Tensor:
+    cum_matrices = torch.empty_like(onestep_matrix, dtype=onestep_matrix.dtype)
+    cum_matrices[0] = torch.eye(onestep_matrix.shape[0], dtype=onestep_matrix.dtype)
     
-    for timestep in range(1, n):
-        cum_matrices[timestep] = cum_matrices[timestep-1] @ onestep_matrices[timestep]
+    for timestep in range(1, num_timesteps):
+        cum_matrices[timestep] = cum_matrices[timestep-1] @ onestep_matrix
     
-    assert onestep_matrices.shape == cum_matrices.shape, f'Wrong shape!'
+    assert onestep_matrix.shape == cum_matrices.shape, f'Wrong shape!'
     return cum_matrices
 
 
@@ -482,17 +481,15 @@ def uniform_prior(
     num_timesteps: int,
     num_skip_steps: int
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    p_onestep_mats = torch.tensor([alpha / (num_categories - 1)] * num_categories**2, dtype=torch.float32)
-    p_onestep_mats = p_onestep_mats.view(num_categories, num_categories)
-    p_onestep_mats -= torch.diag(torch.diag(p_onestep_mats))
-    p_onestep_mats += torch.diag(torch.tensor([1 - alpha] * num_categories))
-    p_onestep_mats = torch.matrix_power(p_onestep_mats, n=num_skip_steps)
+    p_onestep_mat = torch.tensor([alpha / (num_categories - 1)] * num_categories**2, dtype=torch.float32)
+    p_onestep_mat = p_onestep_mat.view(num_categories, num_categories)
+    p_onestep_mat -= torch.diag(torch.diag(p_onestep_mat))
+    p_onestep_mat += torch.diag(torch.tensor([1 - alpha] * num_categories))
+    p_onestep_mat = torch.matrix_power(p_onestep_mat, n=num_skip_steps)
 
-    p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
-    p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
-    p_cum_mats = get_cum_matrices(p_onestep_mats)
+    p_cum_mats = get_cum_matrices(num_timesteps, p_onestep_mat)
 
-    return p_onestep_mats.transpose(1, 2), p_cum_mats
+    return p_onestep_mat.transpose(0, 1), p_cum_mats
 
 
 def von_mises_prior(
@@ -502,20 +499,18 @@ def von_mises_prior(
     num_skip_steps: int
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     angles = np.linspace(0, 2 * np.pi, num_categories, endpoint=False)
-    p_onestep_mats = np.zeros((num_categories, num_categories))
+    p_onestep_mat = np.zeros((num_categories, num_categories))
 
     for i, current_angle in enumerate(angles):
         for j, next_angle in enumerate(angles):
-            p_onestep_mats[i, j] = np.exp((1 / (alpha**2 * (num_categories - 1)**2)) * np.cos(next_angle - current_angle))
-        p_onestep_mats[i] /= np.sum(p_onestep_mats[i])
-    p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
+            p_onestep_mat[i, j] = np.exp((1 / (alpha**2 * (num_categories - 1)**2)) * np.cos(next_angle - current_angle))
+        p_onestep_mat[i] /= np.sum(p_onestep_mat[i])
+    p_onestep_mat = np.linalg.matrix_power(p_onestep_mat, n=num_skip_steps)
 
-    p_onestep_mats = torch.from_numpy(p_onestep_mats)
-    p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
-    p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
-    p_cum_mats = get_cum_matrices(p_onestep_mats)
+    p_onestep_mat = torch.from_numpy(p_onestep_mat)
+    p_cum_mats = get_cum_matrices(num_timesteps, p_onestep_mat)
 
-    return p_onestep_mats.transpose(1, 2), p_cum_mats
+    return p_onestep_mat.transpose(0, 1), p_cum_mats
 
 
 def gaussian_prior(
@@ -525,34 +520,32 @@ def gaussian_prior(
     num_skip_steps: int,
     use_doubly_stochastic: bool = True
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    p_onestep_mats = np.zeros([num_categories, num_categories], dtype=np.float32)
+    p_onestep_mat = np.zeros([num_categories, num_categories], dtype=np.float32)
 
     max_distance = num_categories - 1
     indices = np.arange(num_categories)[None, ...]
     values = -4 * (indices - indices.T)**2 / (alpha * max_distance)**2
 
     if not use_doubly_stochastic:
-        p_onestep_mats = softmax(values, axis=1)
+        p_onestep_mat = softmax(values, axis=1)
     else: # this logic mathcing D3PM article
-        norm_const = np.exp(-4 * np.arange(
-            max_distance, max_distance, step=1, dtype=np.float32
-        ) ** 2 / (alpha * max_distance)**2).sum()
+        norm_const = -4 * np.arange(max_distance, max_distance, step=1, dtype=np.float32) ** 2
+        norm_const /= (alpha * max_distance)**2
+        norm_const = np.exp(norm_const).sum()
         for i in range(num_categories):
             for j in range(num_categories):
                 if i == j:
                     continue
                 value = np.exp(-(4 * (i - j)** 2) / (alpha * max_distance)**2)
-                p_onestep_mats[i][j] = value / norm_const
+                p_onestep_mat[i][j] = value / norm_const
         for i in range(num_categories):
-            p_onestep_mats[i][i] = 1 - p_onestep_mats[i].sum() 
+            p_onestep_mat[i][i] = 1 - p_onestep_mat[i].sum() 
 
-    p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
-    p_onestep_mats = torch.from_numpy(p_onestep_mats) # .softmax(dim=1)
-    p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
-    p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
-    p_cum_mats = get_cum_matrices(p_onestep_mats)
+    p_onestep_mat = np.linalg.matrix_power(p_onestep_mat, n=num_skip_steps)
+    p_onestep_mat = torch.from_numpy(p_onestep_mat) # .softmax(dim=1)
+    p_cum_mats = get_cum_matrices(num_timesteps, p_onestep_mat)
 
-    return p_onestep_mats.transpose(1, 2), p_cum_mats
+    return p_onestep_mat.transpose(0, 1), p_cum_mats
 
 
 def centroid_gaussian_prior(
@@ -566,15 +559,13 @@ def centroid_gaussian_prior(
     distances = cdist(centroids, centroids, metric='euclidean')  # num_categories x num_categories
     max_distance = distances.max()
 
-    p_onestep_mats = softmax(-distances / (alpha * max_distance)**2, axis=1)
-    p_onestep_mats = np.linalg.matrix_power(p_onestep_mats, n=num_skip_steps)
+    p_onestep_mat = softmax(-distances / (alpha * max_distance)**2, axis=1)
+    p_onestep_mat = np.linalg.matrix_power(p_onestep_mat, n=num_skip_steps)
 
-    p_onestep_mats = torch.from_numpy(p_onestep_mats) 
-    p_onestep_mats = p_onestep_mats.unsqueeze(0).repeat(num_timesteps + 1, 1, 1)
-    p_onestep_mats = torch.cat([torch.eye(num_categories).unsqueeze(0), p_onestep_mats], dim=0)
-    p_cum_mats = get_cum_matrices(p_onestep_mats)
+    p_onestep_mat = torch.from_numpy(p_onestep_mat) 
+    p_cum_mats = get_cum_matrices(num_timesteps, p_onestep_mat)
 
-    return p_onestep_mats.transpose(1, 2), p_cum_mats
+    return p_onestep_mat.transpose(0, 1), p_cum_mats
 
 
 # Cumulative returns with following pattern
@@ -621,7 +612,7 @@ class Prior(nn.Module):
             p_onestep, p_cum = centroid_gaussian_prior(alpha, num_categories, num_timesteps, num_skip_steps, centroids)
         else:
             raise NotImplementedError(f'Got unknown prior: {prior_type} or centroids is None!')
-        self.register_buffer("p_onestep", p_onestep[1].to(dtype=dtype))
+        self.register_buffer("p_onestep", p_onestep.to(dtype=dtype))
         self.register_buffer("p_cum", p_cum.to(dtype=dtype))
         
     def extract(
