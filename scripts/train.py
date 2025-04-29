@@ -51,7 +51,7 @@ if __name__ == '__main__':
         OmegaConf.save(config=args, f=os.path.join(exp_path, 'config.yaml'))
     
     accelerator.init_trackers(
-        project_name='Discrete SBM', 
+        project_name='csbm', 
         init_kwargs={'wandb': {'name': exp_name}}, 
         config=OmegaConf.to_object(args) # type: ignore
     )
