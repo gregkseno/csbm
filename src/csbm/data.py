@@ -465,13 +465,14 @@ class CouplingDataset(BaseDataset):
 #         Priors        #
 #########################
 def get_cum_matrices(num_timesteps: int, onestep_matrix: torch.Tensor) -> torch.Tensor:
-    cum_matrices = torch.empty_like(onestep_matrix, dtype=onestep_matrix.dtype)
-    cum_matrices[0] = torch.eye(onestep_matrix.shape[0], dtype=onestep_matrix.dtype)
+    num_categories = onestep_matrix.shape[0]
+    cum_matrices = torch.empty(size=(num_timesteps, num_categories, num_categories), dtype=onestep_matrix.dtype)
+    cum_matrices[0] = torch.eye(num_categories, dtype=onestep_matrix.dtype)
     
     for timestep in range(1, num_timesteps):
         cum_matrices[timestep] = cum_matrices[timestep-1] @ onestep_matrix
     
-    assert onestep_matrix.shape == cum_matrices.shape, f'Wrong shape!'
+    assert onestep_matrix.shape == cum_matrices[0].shape, f'Wrong shape!'
     return cum_matrices
 
 
@@ -487,7 +488,7 @@ def uniform_prior(
     p_onestep_mat += torch.diag(torch.tensor([1 - alpha] * num_categories))
     p_onestep_mat = torch.matrix_power(p_onestep_mat, n=num_skip_steps)
 
-    p_cum_mats = get_cum_matrices(num_timesteps, p_onestep_mat)
+    p_cum_mats = get_cum_matrices(num_timesteps + 2, p_onestep_mat)
 
     return p_onestep_mat.transpose(0, 1), p_cum_mats
 
@@ -508,7 +509,7 @@ def von_mises_prior(
     p_onestep_mat = np.linalg.matrix_power(p_onestep_mat, n=num_skip_steps)
 
     p_onestep_mat = torch.from_numpy(p_onestep_mat)
-    p_cum_mats = get_cum_matrices(num_timesteps, p_onestep_mat)
+    p_cum_mats = get_cum_matrices(num_timesteps + 2, p_onestep_mat)
 
     return p_onestep_mat.transpose(0, 1), p_cum_mats
 
@@ -521,15 +522,13 @@ def gaussian_prior(
     use_doubly_stochastic: bool = True
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     p_onestep_mat = np.zeros([num_categories, num_categories], dtype=np.float32)
-
     max_distance = num_categories - 1
-    indices = np.arange(num_categories)[None, ...]
-    values = -4 * (indices - indices.T)**2 / (alpha * max_distance)**2
-
     if not use_doubly_stochastic:
+        indices = np.arange(num_categories)[None, ...]
+        values = (-4 * (indices - indices.T)**2) / ((alpha * max_distance)**2)
         p_onestep_mat = softmax(values, axis=1)
     else: # this logic mathcing D3PM article
-        norm_const = -4 * np.arange(max_distance, max_distance, step=1, dtype=np.float32) ** 2
+        norm_const = -4 * (np.arange(-max_distance, max_distance+2, step=1, dtype=np.float32) ** 2)
         norm_const /= (alpha * max_distance)**2
         norm_const = np.exp(norm_const).sum()
         for i in range(num_categories):
@@ -543,7 +542,7 @@ def gaussian_prior(
 
     p_onestep_mat = np.linalg.matrix_power(p_onestep_mat, n=num_skip_steps)
     p_onestep_mat = torch.from_numpy(p_onestep_mat) # .softmax(dim=1)
-    p_cum_mats = get_cum_matrices(num_timesteps, p_onestep_mat)
+    p_cum_mats = get_cum_matrices(num_timesteps + 2, p_onestep_mat)
 
     return p_onestep_mat.transpose(0, 1), p_cum_mats
 
@@ -563,7 +562,7 @@ def centroid_gaussian_prior(
     p_onestep_mat = np.linalg.matrix_power(p_onestep_mat, n=num_skip_steps)
 
     p_onestep_mat = torch.from_numpy(p_onestep_mat) 
-    p_cum_mats = get_cum_matrices(num_timesteps, p_onestep_mat)
+    p_cum_mats = get_cum_matrices(num_timesteps + 2, p_onestep_mat)
 
     return p_onestep_mat.transpose(0, 1), p_cum_mats
 
