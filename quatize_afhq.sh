@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=quantize-afhq
 #SBATCH --partition=ais-gpu
-#SBATCH --reservation=HPC-2507
 #SBATCH --error=runs/quantize-afhq-%j.err
 #SBATCH --output=runs/quantize-afhq-%j.log
 #SBATCH --gpus=1

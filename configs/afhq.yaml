@@ -2,8 +2,8 @@ data:
   type: quantized_images # choices: "toy", "images", "quantized_images", "texts"
   dataset: afhq
   dim: 512
-  latent_dim: 16
-  num_categories: 256
+  latent_dim: 32
+  num_categories: 1024
   num_timesteps: 100
   num_skip_steps: 1
   coupling_type: independent # choices: "independent", "prior"
@@ -14,10 +14,10 @@ model:
   num_att_heads: 16
   dropout: 0
 codec:
-  ckpt_path: checkpoints/vqgan_afhq_f32_256.ckpt
-  config_path: configs/vqgan_afhq_f32_256.yaml
+  ckpt_path: checkpoints/vqgan_afhq_f16_1024.ckpt
+  config_path: configs/vqgan_afhq_f16_1024.yaml
 prior:
-  alpha: 0.01
+  alpha: 0.005
   type: uniform # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"
 train:
   batch_size: 32

@@ -250,6 +250,7 @@ def visualize_trajectory_toy(
     step: Optional[int] = None,
     dpi: int = 200,
     use_legend: bool = True,
+    axlim: Optional[Tuple[float, float]] = None
 ):
     if figsize is None:
         figsize = (8, 8)
@@ -298,8 +299,9 @@ def visualize_trajectory_toy(
     if use_legend:
         ax.legend(loc="upper left")
 
-    # ax.set_xlim([-2, 52])
-    # ax.set_ylim([-2, 52])
+    if axlim is not None:
+        ax.set_xlim(axlim)
+        ax.set_ylim(axlim)
     plt.show()
     
     fig.tight_layout(pad=0.5)

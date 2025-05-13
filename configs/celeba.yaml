@@ -18,8 +18,8 @@ codec:
   ckpt_path: checkpoints/vqgan_celeba_f8_1024_new.ckpt
   config_path: configs/vqgan_celeba_f8_1024.yaml
 prior:
-  alpha: 0.002
-  type: centroid_gaussian # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"
+  alpha: 0.0
+  type: uniform # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"
 train:
   batch_size: 32
   low_precision: false

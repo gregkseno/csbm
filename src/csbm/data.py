@@ -535,7 +535,7 @@ def gaussian_prior(
             for j in range(num_categories):
                 if i == j:
                     continue
-                value = np.exp(-(4 * (i - j)** 2) / (alpha * max_distance)**2)
+                value = np.exp(-(4 * (i - j)**2) / (alpha * max_distance)**2)
                 p_onestep_mat[i][j] = value / norm_const
         for i in range(num_categories):
             p_onestep_mat[i][i] = 1 - p_onestep_mat[i].sum() 
@@ -644,7 +644,7 @@ class Prior(nn.Module):
             else:
                 return self.p_cum[t, :, column_id]
         else:   
-            raise ValueError('x_start and x_end cannot be None both!')
+            raise ValueError('row_id and column_id cannot be None both!')
 
     def sample_bridge(self, x_start: torch.Tensor, x_end: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         r"""Samples from bridge $p(x_{t} | x_{0}, x_{1})$."""

@@ -3,8 +3,8 @@ data:
   dataset: cmnist
   dim: 32
   num_categories: 256
-  num_timesteps: 25
-  num_skip_steps: 4
+  num_timesteps: 100
+  num_skip_steps: 1
   coupling_type: independent # choices: "independent", "prior"
 model:
   in_channels: 3
@@ -21,15 +21,15 @@ model:
   dropout: 0.1
 prior:
   alpha: 0.01
-  type: uniform # choices: "uniform", "gaussian", "von_mises"
+  type: gaussian # choices: "uniform", "gaussian", "von_mises"
 train:
   batch_size: 128
   low_precision: false
   gradient_accumulation_steps: 1
   iterations: 20
-  prior_iterations: 5
+  prior_iterations: 10
   inner_iterations: 20000
-  use_mini_batch: false
+  use_mini_batch: true
   ce_loss_coeff: 0.001
   kl_loss_coeff: 1
   mse_loss_coeff: 0
