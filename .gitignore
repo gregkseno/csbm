@@ -10,5 +10,4 @@
 **/*.pt
 **/*.pth
 **/*.zip
-**/notebooks
 **/checkpoints
