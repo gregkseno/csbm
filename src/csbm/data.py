@@ -372,15 +372,16 @@ class YelpDataset(BaseDataset):
         data_dir: str, 
         tokenizer: Optional[PreTrainedTokenizerFast] = None,
         max_length: Optional[int] = None,
-        split: Literal['train', 'eval', 'test', 'all'] = 'train',
+        split: Literal['train', 'eval', 'test', 'all', 'with_reference'] = 'train',
     ):
         self.sentiment = sentiment
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.split = split
         if tokenizer is not None:
             assert max_length is not None, 'max_length should be set if tokenizer is set!'
 
-        self.file_path = os.path.join(data_dir, 'yelp', f'yelp_small_{split}.json')
+        self.file_path = os.path.join(data_dir, 'yelp', f'yelp_small_{split}.jsonl')
         
         self.file_positions = []
         with open(self.file_path, 'r') as f:
@@ -405,8 +406,8 @@ class YelpDataset(BaseDataset):
             f.seek(file_pos)
             line = f.readline()
             data = json.loads(line)
-            text = data['text']
 
+        text = data['text']
         if self.tokenizer is not None:
             text = self.tokenizer.encode(
                 text=text, 
@@ -417,6 +418,21 @@ class YelpDataset(BaseDataset):
                 return_token_type_ids=False,
                 return_attention_mask=False,
             ).squeeze() # type: ignore
+
+
+            if self.split == 'with_reference':
+                reference = data['reference']
+                reference = self.tokenizer.encode(
+                    text=reference, 
+                    padding='max_length', 
+                    truncation=True, 
+                    max_length=self.max_length,
+                    return_tensors='pt',
+                    return_token_type_ids=False,
+                    return_attention_mask=False,
+                ).squeeze() # type: ignore
+                return text, reference
+            
         return text
 
     def repeat(self, n: int, max_len: int):
