@@ -1,7 +1,9 @@
 **/.vscode
 **/.ipynb_checkpoints
 **/.virtual_documents
-**/data
+**/data/afhq
+**/data/celeba
+**/data/MNIST
 **/experiments
 **/runs
 **/__pycache__
