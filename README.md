@@ -13,7 +13,7 @@ conda env create -f environment.yml
 Download the CelebA dataset from [Kaggle](https://www.kaggle.com/datasets/jessicali9530/celeba-dataset/data) and unzip it. Follow these steps to prepare the dataset:
 
 1. Rename the dataset folder to `celeba`.
-2. Rename the folder `celeba/img_align_celeba/img_align_celeba` to `celeba/img_align_celeba/train`.
+2. Rename the folder `celeba/img_align_celeba/img_align_celeba` to `celeba/img_align_celeba/raw`.
 
 ## Training
 
