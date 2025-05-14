@@ -5,6 +5,8 @@ channels:
 dependencies:
   - python=3.12
   - pip
+  - pyside6=6.8.0.2
+  - gmpy2=2.1.5
   - pip:
     - accelerate==1.2.0
     - backports.tarfile==1.2.0
@@ -13,7 +15,6 @@ dependencies:
     - dall-e==0.1
     - einops==0.8.0
     - fqdn==1.5.1
-    - gmpy2==2.1.5
     - h2==4.1.0
     - importlib-metadata==8.0.0
     - isoduration==20.11.0
@@ -25,7 +26,6 @@ dependencies:
     - omegaconf==2.3.0
     - pip-chill==1.0.3
     - pot==0.9.5
-    - pyside6==6.8.0.2
     - pysocks==1.7.1
     - pytorch-fid==0.3.0
     - pytorch-lightning==2.4.0
