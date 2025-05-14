@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=train-tokenizer
-#SBATCH --partition=ais-cpu
+#SBATCH --partition=mem
 #SBATCH --error=runs/train-tokenizer-%j.err
 #SBATCH --output=runs/train-tokenizer-%j.log
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=50G
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
@@ -11,5 +11,5 @@
 
 source activate csbm
 python scripts/train_tokenizer.py \
-    --config './configs/yelp.yaml' \
+    --config './configs/amazon.yaml' \
     --data_dir './data'

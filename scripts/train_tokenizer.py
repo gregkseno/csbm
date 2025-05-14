@@ -7,7 +7,7 @@ from tokenizers import Tokenizer
 from tokenizers import models, pre_tokenizers, decoders, trainers, processors
 
 sys.path.append('src')
-from csbm.data import YelpDataset
+from csbm.data import AmazonDataset, YelpDataset
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -20,6 +20,10 @@ if __name__ == '__main__':
     args = OmegaConf.load(args.config)
 
     # Load the dataset for training the tokenizer
+    if args.data.dataset == 'yelp':
+        dataset = YelpDataset(sentiment='all', data_dir=data_dir, split='all')
+    elif args.data.dataset == 'amazon':
+        dataset = AmazonDataset(sentiment='all', data_dir=data_dir, split='all')
     dataset = YelpDataset(sentiment='all', data_dir=data_dir, split='all')
     print(f"Loaded dataset with {len(dataset)} samples.")
     print(dataset[0])
