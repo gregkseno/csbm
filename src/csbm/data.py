@@ -61,10 +61,10 @@ class BaseDataset(Dataset):
 class DiscreteGaussianDataset(BaseDataset):
     def __init__(self, n_samples: int, dim: int, num_categories: int = 100, train: bool = True):
         dataset = torch.randn(size=[n_samples, dim])
-        dataset = self.continuous_to_discrete(dataset, num_categories)
         if not train:
-            dataset[:4] = torch.tensor([[25, 48], [45, 25], [25, 5], [5, 20]])      
-
+            dataset[:4] = torch.tensor([[0.0, 0.0], [1.75, -1.75], [-1.5, 1.5], [2, 2]])
+            
+        dataset = self.continuous_to_discrete(dataset, num_categories)
         self.dataset = dataset
     
 class DiscreteSwissRollDataset(BaseDataset):
@@ -74,9 +74,9 @@ class DiscreteSwissRollDataset(BaseDataset):
             noise=noise
         )[0][:, [0, 2]]
         dataset = 1.3 * (dataset - dataset.mean()) / dataset.std()
-        dataset = self.continuous_to_discrete(dataset, num_categories)
         if not train:
-            dataset[:4] = torch.tensor([[25, 25], [46, 4], [6, 44], [49, 49]])
+            dataset[:4] = torch.tensor([[0.0, 0.0], [1.75, -1.75], [-1.5, 1.5], [2, 2]])
+        dataset = self.continuous_to_discrete(dataset, num_categories)
         self.dataset = dataset      
     
 class DiscreteColoredMNISTDataset(BaseDataset):
