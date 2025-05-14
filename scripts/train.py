@@ -118,6 +118,7 @@ if __name__ == '__main__':
         num_timesteps=args.data.num_timesteps, 
         num_skip_steps=args.data.num_skip_steps, 
         prior_type=args.prior.type,
+        eps=args.prior.eps,
         centroids=centroids if centroids is not None else None,
         dtype=torch.bfloat16 if args.train.low_precision else torch.float32,
     )

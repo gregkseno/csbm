@@ -12,6 +12,7 @@ model:
 prior:
   alpha: 0.01
   type: uniform # choices: "uniform", "gaussian", "von_mises"
+  eps: 1e-6
 train:
   batch_size: 512
   low_precision: false

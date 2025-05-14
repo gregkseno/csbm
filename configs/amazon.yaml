@@ -24,6 +24,7 @@ tokenizer:
 prior:
   alpha: 0.01
   type: uniform # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"
+  eps: 1e-20
 train:
   batch_size: 32
   low_precision: true
