@@ -1,7 +1,7 @@
 data:
   type: texts # choices: "toy", "images", "quantized_images", "texts"
   dataset: amazon
-  dim: 55
+  dim: 100
   num_categories: 8192
   num_timesteps: 100
   num_skip_steps: 1
