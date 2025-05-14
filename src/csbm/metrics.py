@@ -8,7 +8,10 @@ from torch.nn import functional as F
 from torchmetrics import Metric
 from torchmetrics.image.kid import KernelInceptionDistance
 from torchmetrics.image.fid import FrechetInceptionDistance as FID
+from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity as LPIPS
 from torchmetrics.text import EditDistance, Perplexity, BLEUScore
+from torchmetrics.regression import MeanSquaredError as MSE
+from torchmetrics.classification import MulticlassHammingDistance as HammingDistance
 from torchmetrics.functional.text.perplexity import _perplexity_update
 
 from transformers import (
@@ -156,5 +159,6 @@ class ClassifierAccuracy(Metric):
     def compute(self) -> torch.Tensor:
         """Compute the accuracy."""
         return self.predictions.mean()
+
 
        

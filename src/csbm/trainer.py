@@ -20,7 +20,11 @@ from csbm.models.images import ImageD3PM
 from csbm.models.texts import TextD3PM
 
 from csbm.data import BaseDataset, CouplingDataset, Prior
-from csbm.metrics import FID, GenerativePerplexity, EditDistance, ClassifierAccuracy, BLEUScore
+from csbm.metrics import (
+    FID, MSE, HammingDistance,
+    GenerativePerplexity, EditDistance, 
+    ClassifierAccuracy, BLEUScore
+)
 from csbm.utils import visualize, visualize_trajectory
 from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 
@@ -110,6 +114,19 @@ class СSBMTrainer:
                     normalize=self.is_generation_normalized
                 ).to(self.accelerator.device)
             }
+            self.mses = {
+                'forward': MSE().to(self.accelerator.device),
+                'backward': MSE().to(self.accelerator.device)
+            }
+            if exp_type == 'quantized_images':
+                self.hammings = {
+                    'forward': HammingDistance(
+                        num_classes=prior.num_categories, average='micro'
+                    ).to(self.accelerator.device),
+                    'backward': HammingDistance(
+                        num_classes=prior.num_categories, average='micro'
+                    ).to(self.accelerator.device)
+                }
         elif exp_type == 'texts':
             self.accuracy = {
                 'forward': ClassifierAccuracy(fb='forward').to(self.accelerator.device),
@@ -233,8 +250,8 @@ class СSBMTrainer:
             if self.step % self.eval_freq == 0:
                 self.accelerator.print(f'{fb.capitalize()} D-IMF iteration: {self.iteration}: kl_loss: {info["kl_loss"]}, ce_loss: {info["ce_loss"]}')
                 self.viz(fb=fb, dataloader=testloader, step=self.step)
-            if self.step % (self.eval_freq * 5) == 0 and self.exp_type != 'toy':
-                self.eval(fb=fb, dataloader=testloader, step=self.step)
+                if self.exp_type != 'toy':
+                    self.eval(fb=fb, dataloader=testloader, step=self.step)
             self.accelerator.log(info, step=self.step)
         
     def viz(
@@ -319,6 +336,9 @@ class СSBMTrainer:
     ):
         if self.exp_type == 'quantized_images' or self.exp_type == 'images':
             self.fids[fb].reset()
+            self.mses[fb].reset()
+            if self.exp_type == 'quantized_images':
+                self.hammings[fb].reset()
         elif self.exp_type == 'texts':
             self.accuracy[fb].reset()
             self.gen_ppls[fb].reset()
@@ -338,8 +358,8 @@ class СSBMTrainer:
             for test_x_start, test_x_end in trange:
                 if self.codec is not None:
                     encoded_test_x_end = self.codec.encode_to_cats(test_x_end)
-                    pred_x_start = self.models[fb].sample(encoded_test_x_end, self.prior)
-                    pred_x_start = self.codec.decode_to_image(pred_x_start)
+                    encoded_pred_x_start = self.models[fb].sample(encoded_test_x_end, self.prior)
+                    pred_x_start = self.codec.decode_to_image(encoded_pred_x_start)
                 else:
                     pred_x_start = self.models[fb].sample(test_x_end, self.prior)
 
@@ -349,6 +369,10 @@ class СSBMTrainer:
                         pred_x_start = pred_x_start.to(dtype=torch.uint8)
                     self.fids[fb].update(test_x_start, real=True)
                     self.fids[fb].update(pred_x_start, real=False)
+                    self.mses[fb].update(pred_x_start, test_x_end)
+                    if self.exp_type == 'quantized_images':
+                        self.hammings[fb].update(encoded_pred_x_start, encoded_test_x_end)
+                    
                 elif self.exp_type == 'texts' and self.tokenizer is not None:
                     pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu()) 
                     test_x_start = self.tokenizer.batch_decode(test_x_start.cpu())
@@ -360,7 +384,16 @@ class СSBMTrainer:
                     raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
 
         if self.exp_type == 'quantized_images' or self.exp_type == 'images':  
-            self.accelerator.log({f'{fb}_fid': self.fids[fb].compute().detach()}, step=step)
+            self.accelerator.log(
+                {f'{fb}_fid': self.fids[fb].compute().detach(),
+                f'{fb}_mse': self.mses[fb].compute().detach()},
+                step=step
+            )
+            if self.exp_type == 'quantized_images':
+                self.accelerator.log(
+                    {f'{fb}_hamming': self.hammings[fb].compute().detach()},
+                    step=step
+                )
         elif self.exp_type == 'texts':
             self.accelerator.log(
                 {f'{fb}_accuracy': self.accuracy[fb].compute().detach(), 
