@@ -1,9 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=train-yelp
+#SBATCH --job-name=train-amazon
 #SBATCH --partition=ais-gpu
-#SBATCH --reservation=HPC-2507
-#SBATCH --error=runs/train-yelp-%j.err
-#SBATCH --output=runs/train-yelp-%j.log
+#SBATCH --error=runs/train-amazon-%j.err
+#SBATCH --output=runs/train-amazon-%j.log
 #SBATCH --gpus=4
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=320G
