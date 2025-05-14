@@ -20,7 +20,7 @@ from csbm.models.images import ImageD3PM
 from csbm.models.texts import TextD3PM
 
 from csbm.data import BaseDataset, CouplingDataset, Prior
-from csbm.metrics import FID, GenerativePerplexity, EditDistance, ClassifierAccuracy
+from csbm.metrics import FID, GenerativePerplexity, EditDistance, ClassifierAccuracy, BLEUScore
 from csbm.utils import visualize, visualize_trajectory
 from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 
@@ -126,6 +126,10 @@ class СSBMTrainer:
             self.edit_distances = {
                 'forward': EditDistance().to(self.accelerator.device),
                 'backward': EditDistance().to(self.accelerator.device)
+            }
+            self.bleu = {
+                'forward': BLEUScore().to(self.accelerator.device),
+                'backward': BLEUScore().to(self.accelerator.device)
             }
         
         self.eval_freq = eval_freq
@@ -318,7 +322,8 @@ class СSBMTrainer:
         elif self.exp_type == 'texts':
             self.accuracy[fb].reset()
             self.gen_ppls[fb].reset()
-            self.edit_distances[fb].reset()            
+            self.edit_distances[fb].reset()   
+            self.bleu[fb].reset()         
         else:
             raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
         self.models[fb].eval()
@@ -350,6 +355,7 @@ class СSBMTrainer:
                     self.accuracy[fb].update(pred_x_start)
                     self.gen_ppls[fb].update(pred_x_start)
                     self.edit_distances[fb].update(pred_x_start, test_x_start)
+                    self.bleu[fb].update(pred_x_start, [[text] for text in test_x_start])
                 else:
                     raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
 
@@ -359,7 +365,8 @@ class СSBMTrainer:
             self.accelerator.log(
                 {f'{fb}_accuracy': self.accuracy[fb].compute().detach(), 
                  f'{fb}_gen_ppl': self.gen_ppls[fb].compute().detach(),
-                 f'{fb}_edit_distance': self.edit_distances[fb].compute().detach()}, 
+                 f'{fb}_edit_distance': self.edit_distances[fb].compute().detach(),
+                 f'{fb}_bleu': self.bleu[fb].compute().detach()},
                 step=step
             )
         else:
