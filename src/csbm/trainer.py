@@ -363,13 +363,15 @@ class СSBMTrainer:
                 else:
                     pred_x_start = self.models[fb].sample(test_x_end, self.prior)
 
-                if self.exp_type == 'quantized_images' or self.exp_type == 'images':  
+                if self.exp_type == 'quantized_images' or self.exp_type == 'images':
+                    self.mses[fb].update(pred_x_start.float(), test_x_end.float())  
                     if not self.is_generation_normalized:
+                        # this stuff only in images
                         test_x_start = test_x_start.to(dtype=torch.uint8)
                         pred_x_start = pred_x_start.to(dtype=torch.uint8)
                     self.fids[fb].update(test_x_start, real=True)
                     self.fids[fb].update(pred_x_start, real=False)
-                    self.mses[fb].update(pred_x_start, test_x_end)
+                    
                     if self.exp_type == 'quantized_images':
                         self.hammings[fb].update(encoded_pred_x_start, encoded_test_x_end)
                     
