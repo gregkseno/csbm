@@ -370,6 +370,7 @@ class СSBMTrainer:
                     if self.exp_type == 'images':
                         test_x_start = test_x_start / 255.0
                         pred_x_start = pred_x_start / 255.0
+                        test_x_end = test_x_end / 255.0
                     self.fids[fb].update(test_x_start, real=True)
                     self.fids[fb].update(pred_x_start, real=False)
                     self.mses[fb].update(pred_x_start, test_x_end)  
@@ -379,11 +380,11 @@ class СSBMTrainer:
                     
                 elif self.exp_type == 'texts' and self.tokenizer is not None:
                     pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu()) 
-                    test_x_start = self.tokenizer.batch_decode(test_x_start.cpu())
+                    test_x_end = self.tokenizer.batch_decode(test_x_end.cpu())
                     self.accuracy[fb].update(pred_x_start)
                     self.gen_ppls[fb].update(pred_x_start)
-                    self.edit_distances[fb].update(pred_x_start, test_x_start)
-                    self.bleu[fb].update(pred_x_start, [[text] for text in test_x_start])
+                    self.edit_distances[fb].update(pred_x_start, test_x_end)
+                    self.bleu[fb].update(pred_x_start, [[text] for text in test_x_end])
                 else:
                     raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
 

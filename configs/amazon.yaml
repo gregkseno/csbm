@@ -22,7 +22,7 @@ model:
 tokenizer:
   path: checkpoints/tokenizer_amazon.json
 prior:
-  alpha: 0.01
+  alpha: 0.005
   type: uniform # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"
   eps: 1e-20
 train:
