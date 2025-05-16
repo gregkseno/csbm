@@ -72,8 +72,8 @@ class DiscreteSwissRollDataset(BaseDataset):
         dataset = make_swiss_roll(
             n_samples=n_samples,
             noise=noise
-        )[0][:, [0, 2]]
-        dataset = 1.3 * (dataset - dataset.mean()) / dataset.std()
+        )[0][:, [0, 2]]  / 7.5
+        # dataset = (dataset - dataset.mean()) / dataset.std()
         if not train:
             dataset[:4] = torch.tensor([[0.0, 0.0], [1.75, -1.75], [-1.5, 1.5], [2, 2]])
         dataset = self.continuous_to_discrete(dataset, num_categories)
