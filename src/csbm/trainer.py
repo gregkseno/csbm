@@ -129,8 +129,12 @@ class СSBMTrainer:
                 }
         elif exp_type == 'texts':
             self.accuracy = {
-                'forward': ClassifierAccuracy(fb='forward').to(self.accelerator.device),
-                'backward': ClassifierAccuracy(fb='backward').to(self.accelerator.device)
+                'forward': ClassifierAccuracy(
+                    fb='forward', device=self.accelerator.device
+                ).to(self.accelerator.device),
+                'backward': ClassifierAccuracy(
+                    fb='backward', device=self.accelerator.device
+                ).to(self.accelerator.device)
             }
             self.gen_ppls = {
                 'forward': GenerativePerplexity(

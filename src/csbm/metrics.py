@@ -96,8 +96,7 @@ class GenerativePerplexity(Perplexity):
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             gen_ppl_eval_model_name_or_path, 
-            use_fast=True, 
-            add_special_tokens=False
+            use_fast=True
         )
         if self.tokenizer.pad_token is None:
             self.tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
@@ -138,11 +137,12 @@ class ClassifierAccuracy(Metric):
     def __init__(
         self, 
         fb: Literal['forward', 'backward'], 
-        cls_model: str = 'sentiment-analysis', 
+        cls_model: str = 'sentiment-analysis',
+        device: Optional[Union[str, int]] = None, 
         **kwargs
     ):
         super().__init__(**kwargs)
-        self.classifier = pipeline(cls_model)
+        self.classifier = pipeline(cls_model, device=device)
         if fb == 'forward':
             self.target_lable = 'POSITIVE'
         else:

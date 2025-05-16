@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=train-amazon
 #SBATCH --partition=ais-gpu
+#SBATCH --reservation=HPC-2507-4
 #SBATCH --error=runs/train-amazon-%j.err
 #SBATCH --output=runs/train-amazon-%j.log
 #SBATCH --gpus=4
