@@ -21,6 +21,7 @@ from transformers import (
     AutoTokenizer,
     pipeline
 )
+from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 
 FID_WEIGHTS_URL = 'https://github.com/mseitzer/pytorch-fid/releases/download/fid_weights/pt_inception-2015-12-05-6726825d.pth'  # noqa: E501
 CLIP_MODEL_NAME = "openai/clip-vit-large-patch14-336"
@@ -124,11 +125,21 @@ class GenerativePerplexity(Perplexity):
     def update(self, text_samples: List[str]) -> None:
         text_samples = list(map(self._add_special_tokens, text_samples))
         outputs = self.tokenizer(text_samples, **self.tokenizer_kwargs)
-        for (tokens_chunk, attn_mask_chunk) in zip(outputs['input_ids'], outputs['attention_mask']): # type: ignore
-            logits = self.eval_model(tokens_chunk, attention_mask=attn_mask_chunk)[0]
-            total_log_probs, count = _perplexity_update(logits, tokens_chunk, self.ignore_index)
-            self.total_log_probs += total_log_probs
-            self.count += count
+        input_ids = outputs['input_ids'].to(self.device) # type: ignore
+        attention_mask = outputs['attention_mask'].to(self.device) # type: ignore
+        output: CausalLMOutputWithCrossAttentions = self.model(
+            input_ids, attention_mask=attention_mask
+        )
+        logits = output.logits
+        total_log_probs, count = _perplexity_update(
+            logits, input_ids, self.ignore_index
+        )
+        self.total_log_probs += total_log_probs
+        self.count += count
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
 
 
 class ClassifierAccuracy(Metric):

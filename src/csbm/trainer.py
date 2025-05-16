@@ -100,18 +100,17 @@ class СSBMTrainer:
         if exp_path is not None:
             self.checkpoint_path = os.path.join(exp_path, 'checkpoints')            
 
-        self.is_generation_normalized = (exp_type == 'quantized_images')
         if exp_type == 'quantized_images' or exp_type == 'images':
             self.fids = {
                 'forward': FID(
                     feature=2048, 
                     reset_real_features=False, 
-                    normalize=self.is_generation_normalized
+                    normalize=True
                 ).to(self.accelerator.device),
                 'backward': FID(
                     feature=2048, 
                     reset_real_features=False, 
-                    normalize=self.is_generation_normalized
+                    normalize=True
                 ).to(self.accelerator.device)
             }
             self.mses = {
@@ -131,10 +130,10 @@ class СSBMTrainer:
             self.accuracy = {
                 'forward': ClassifierAccuracy(
                     fb='forward', device=self.accelerator.device
-                ).to(self.accelerator.device),
+                ),
                 'backward': ClassifierAccuracy(
                     fb='backward', device=self.accelerator.device
-                ).to(self.accelerator.device)
+                )
             }
             self.gen_ppls = {
                 'forward': GenerativePerplexity(
@@ -368,14 +367,13 @@ class СSBMTrainer:
                     pred_x_start = self.models[fb].sample(test_x_end, self.prior)
 
                 if self.exp_type == 'quantized_images' or self.exp_type == 'images':
-                    self.mses[fb].update(pred_x_start.float(), test_x_end.float())  
-                    if not self.is_generation_normalized:
-                        # this stuff only in images
-                        test_x_start = test_x_start.to(dtype=torch.uint8)
-                        pred_x_start = pred_x_start.to(dtype=torch.uint8)
+                    if self.exp_type == 'images':
+                        test_x_start = test_x_start / 255.0
+                        pred_x_start = pred_x_start / 255.0
                     self.fids[fb].update(test_x_start, real=True)
                     self.fids[fb].update(pred_x_start, real=False)
-                    
+                    self.mses[fb].update(pred_x_start, test_x_end)  
+
                     if self.exp_type == 'quantized_images':
                         self.hammings[fb].update(encoded_pred_x_start, encoded_test_x_end)
                     
