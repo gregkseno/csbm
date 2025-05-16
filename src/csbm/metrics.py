@@ -95,7 +95,7 @@ class GenerativePerplexity(Perplexity):
         os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.gen_ppl_eval_model_name_or_path, 
+            gen_ppl_eval_model_name_or_path, 
             use_fast=True, 
             add_special_tokens=False
         )
