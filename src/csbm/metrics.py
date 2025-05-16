@@ -9,7 +9,7 @@ from torchmetrics import Metric
 from torchmetrics.image.kid import KernelInceptionDistance
 from torchmetrics.image.fid import FrechetInceptionDistance as FID
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity as LPIPS
-from torchmetrics.text import EditDistance, Perplexity, BLEUScore
+from torchmetrics.text import EditDistance, BLEUScore
 from torchmetrics.regression import MeanSquaredError as MSE
 from torchmetrics.classification import MulticlassHammingDistance as HammingDistance
 from torchmetrics.functional.text.perplexity import _perplexity_update
@@ -19,7 +19,8 @@ from transformers import (
     CLIPVisionModelWithProjection, 
     AutoModelForCausalLM, 
     AutoTokenizer,
-    pipeline
+    DistilBertTokenizer, 
+    DistilBertForSequenceClassification
 )
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 
@@ -82,61 +83,62 @@ class CMMD(KernelInceptionDistance):
             **kwargs
         )
 
-class GenerativePerplexity(Perplexity):
-    """Generative perplexity metric."""
+class GenerativeNLL(Metric):
+    """Generative negative log-likelihood."""
 
     def __init__(
         self,
-        max_length: int,
-        gen_ppl_eval_model_name_or_path: str = 'gpt2-large',
-        ignore_index: Optional[int] = None,
-        **kwargs: dict[str, Any],
+        gen_ppl_model: str = 'gpt2-large',
+        context_len: int = 1,
+        **kwargs
     ):
-        super().__init__(ignore_index=ignore_index, **kwargs)
+        super().__init__(**kwargs)
         os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
         self.tokenizer = AutoTokenizer.from_pretrained(
-            gen_ppl_eval_model_name_or_path, 
+            gen_ppl_model, 
             use_fast=True
         )
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
-            self.tokenizer.pad_token = "<|pad|>"
-        self.ignore_index = int(self.tokenizer.pad_token_id) # type: ignore
-        
+        self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model = AutoModelForCausalLM.from_pretrained(
-            gen_ppl_eval_model_name_or_path
+            gen_ppl_model
         )
-        self.model.resize_token_embeddings(len(self.tokenizer))
         self.model.eval()
+        self.context_len = context_len
+        self.max_len = self.model.config.n_positions
 
         self.tokenizer_kwargs = {
             'return_tensors': 'pt',
-            'return_token_type_ids': False,
-            'return_attention_mask': True,
-            'truncation': True,
             'padding': True,
-            'max_length': max_length,
         }
-
-    def _add_special_tokens(self, text: str) -> str:
-        return self.tokenizer.bos_token + text + self.tokenizer.eos_token # type: ignore
+        self.add_state("nlls", default=torch.zeros(0))
         
     def update(self, text_samples: List[str]) -> None:
-        text_samples = list(map(self._add_special_tokens, text_samples))
-        outputs = self.tokenizer(text_samples, **self.tokenizer_kwargs)
-        input_ids = outputs['input_ids'].to(self.device) # type: ignore
-        attention_mask = outputs['attention_mask'].to(self.device) # type: ignore
-        output: CausalLMOutputWithCrossAttentions = self.model(
-            input_ids, attention_mask=attention_mask
-        )
-        logits = output.logits
-        total_log_probs, count = _perplexity_update(
-            logits, input_ids, self.ignore_index
-        )
-        self.total_log_probs += total_log_probs
-        self.count += count
+        encodings = self.tokenizer(text_samples, **self.tokenizer_kwargs)
+        seq_len = encodings.input_ids.shape[1]
+        prev_end_loc = 0
 
+        for begin_loc in range(0, seq_len, self.context_len):
+            end_loc = min(begin_loc + self.max_len, seq_len)
+            trg_len = end_loc - prev_end_loc
+            input_ids = encodings.input_ids[:, begin_loc:end_loc].to(self.device)
+            target_ids = input_ids.clone()
+            target_ids[:, :-trg_len] = -100
+            target_ids[target_ids == self.tokenizer.pad_token_id] = -100
+
+            with torch.no_grad():
+                output: CausalLMOutputWithCrossAttentions = self.model(
+                    input_ids, labels=target_ids
+                )
+            self.nlls = torch.cat([self.nlls, output.loss.unsqueeze(0)], dim=0) # type: ignore
+
+            prev_end_loc = end_loc
+            if end_loc == seq_len:
+                break
+
+    def compute(self) -> torch.Tensor:
+        return self.nlls.sum() # type: ignore
+        
     @property
     def device(self):
         return next(self.parameters()).device
@@ -148,28 +150,41 @@ class ClassifierAccuracy(Metric):
     def __init__(
         self, 
         fb: Literal['forward', 'backward'], 
-        cls_model: str = 'sentiment-analysis',
-        device: Optional[Union[str, int]] = None, 
+        cls_model: str = 'distilbert-base-uncased-finetuned-sst-2-english',
         **kwargs
     ):
         super().__init__(**kwargs)
-        self.classifier = pipeline(cls_model, device=device)
+        self.tokenizer = DistilBertTokenizer.from_pretrained(cls_model)
+        self.model = DistilBertForSequenceClassification.from_pretrained(cls_model)
+        self.tokenizer_kwargs = {
+            'return_tensors': 'pt',
+            'padding': True,
+        }
         if fb == 'forward':
-            self.target_lable = 'POSITIVE'
+            self.target_class = 'positive'
         else:
-            self.target_lable = 'NEGATIVE'
-        self.register_buffer("predictions", torch.zeros(0))
+            self.target_class = 'negative'
+        self.add_state("predictions", default=torch.zeros(0))
 
     def update(self, texts: Union[str, List[str]]):
         """Update the metric with text inputs."""
-        # Handle predictions
-        predictions = self.classifier(texts)
-        predictions = torch.tensor([1 if p['label'] == self.target_lable else 0 for p in predictions]).long() # type: ignore
+        inputs = self.tokenizer(texts, **self.tokenizer_kwargs)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        with torch.no_grad():
+            logits: torch.Tensor = self.model(**inputs).logits
+        predictions = logits.argmax(dim=-1)
         self.predictions = torch.cat([self.predictions, predictions], dim=0)
 
+
     def compute(self) -> torch.Tensor:
-        """Compute the accuracy."""
-        return self.predictions.mean()
+        if self.target_class == 'positive':
+            return self.predictions.mean()
+        else:
+            return 1 - self.predictions.mean()
+    
+    @property
+    def device(self):
+        return next(self.parameters()).device
 
 
        

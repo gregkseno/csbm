@@ -22,7 +22,7 @@ from csbm.models.texts import TextD3PM
 from csbm.data import BaseDataset, CouplingDataset, Prior
 from csbm.metrics import (
     FID, MSE, HammingDistance,
-    GenerativePerplexity, EditDistance, 
+    GenerativeNLL, EditDistance, 
     ClassifierAccuracy, BLEUScore
 )
 from csbm.utils import visualize, visualize_trajectory
@@ -129,19 +129,15 @@ class СSBMTrainer:
         elif exp_type == 'texts':
             self.accuracy = {
                 'forward': ClassifierAccuracy(
-                    fb='forward', device=self.accelerator.device
-                ),
-                'backward': ClassifierAccuracy(
-                    fb='backward', device=self.accelerator.device
-                )
-            }
-            self.gen_ppls = {
-                'forward': GenerativePerplexity(
-                    max_length=forward_model.input_dim, 
+                    fb='forward'
                 ).to(self.accelerator.device),
-                'backward': GenerativePerplexity(
-                    max_length=backward_model.input_dim, 
+                'backward': ClassifierAccuracy(
+                    fb='backward'
                 ).to(self.accelerator.device)
+            }
+            self.gen_nll = {
+                'forward': GenerativeNLL().to(self.accelerator.device),
+                'backward': GenerativeNLL().to(self.accelerator.device)
             }
             self.edit_distances = {
                 'forward': EditDistance().to(self.accelerator.device),
@@ -344,7 +340,7 @@ class СSBMTrainer:
                 self.hammings[fb].reset()
         elif self.exp_type == 'texts':
             self.accuracy[fb].reset()
-            self.gen_ppls[fb].reset()
+            self.gen_nll[fb].reset()
             self.edit_distances[fb].reset()   
             self.bleu[fb].reset()         
         else:
@@ -382,7 +378,7 @@ class СSBMTrainer:
                     pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu()) 
                     test_x_end = self.tokenizer.batch_decode(test_x_end.cpu())
                     self.accuracy[fb].update(pred_x_start)
-                    self.gen_ppls[fb].update(pred_x_start)
+                    self.gen_nll[fb].update(pred_x_start)
                     self.edit_distances[fb].update(pred_x_start, test_x_end)
                     self.bleu[fb].update(pred_x_start, [[text] for text in test_x_end])
                 else:
@@ -402,7 +398,7 @@ class СSBMTrainer:
         elif self.exp_type == 'texts':
             self.accelerator.log(
                 {f'{fb}_accuracy': self.accuracy[fb].compute().detach(), 
-                 f'{fb}_gen_ppl': self.gen_ppls[fb].compute().detach(),
+                 f'{fb}_gen_nll': self.gen_nll[fb].compute().detach(),
                  f'{fb}_edit_distance': self.edit_distances[fb].compute().detach(),
                  f'{fb}_bleu': self.bleu[fb].compute().detach()},
                 step=step
