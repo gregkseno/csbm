@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=train-afhq
 #SBATCH --partition=ais-gpu
+#SBATCH --reservation=HPC-2507
 #SBATCH --error=runs/train-afhq-%j.err
 #SBATCH --output=runs/train-afhq-%j.log
 #SBATCH --gpus=4

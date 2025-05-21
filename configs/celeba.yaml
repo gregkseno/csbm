@@ -15,7 +15,7 @@ model:
   num_att_heads: 16
   dropout: 0
 codec:
-  ckpt_path: checkpoints/vqgan_celeba_f8_1024_new.ckpt
+  ckpt_path: checkpoints/vqgan_celeba_f8_1024.ckpt
   config_path: configs/vqgan_celeba_f8_1024.yaml
 prior:
   alpha: 0.0

@@ -14,8 +14,8 @@ model:
   num_att_heads: 16
   dropout: 0
 codec:
-  ckpt_path: checkpoints/vqgan_afhq_f16_1024.ckpt
-  config_path: configs/vqgan_afhq_f16_1024.yaml
+  ckpt_path: checkpoints/vqgan_afhq_f32_1024.ckpt
+  config_path: configs/vqgan_afhq_f32_1024.yaml
 prior:
   alpha: 0.005
   type: uniform # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"

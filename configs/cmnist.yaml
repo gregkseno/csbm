@@ -3,8 +3,8 @@ data:
   dataset: cmnist
   dim: 32
   num_categories: 256
-  num_timesteps: 100
-  num_skip_steps: 1
+  num_timesteps: 50
+  num_skip_steps: 2
   coupling_type: independent # choices: "independent", "prior"
 model:
   in_channels: 3
