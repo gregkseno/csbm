@@ -23,7 +23,6 @@ from csbm.models.texts import TextD3PM
 from csbm.data import BaseDataset, CouplingDataset, Prior
 from csbm.metrics import FID, CMMD, GenerativeNLL, ClassifierAccuracy
 from csbm.metrics import MSE, HammingDistance, EditDistance, BLEUScore
-from csbm.metrics import FID_WEIGHTS_URL
 from csbm.utils import visualize, visualize_trajectory
 from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 

@@ -11,7 +11,8 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import wandb
 
-from accelerate.tracking import GeneralTracker
+from accelerate.tracking import GeneralTracker, on_main_process
+from accelerate.logging import get_logger
 import numpy as np
 import torch
 from torchvision.utils import make_grid
@@ -57,6 +58,25 @@ def convert_to_torch(x: torch.Tensor | np.ndarray) -> torch.Tensor:
 def broadcast(t: torch.Tensor, num_add_dims: int) -> torch.Tensor:
     shape = [t.shape[0]] + [1] * num_add_dims
     return t.reshape(shape)
+
+class ConsoleTracker(GeneralTracker):
+    name = "console"
+    requires_logging_directory = False
+
+    def __init__(self, logger_name: str):
+        self.logger = get_logger(logger_name)
+
+    @property
+    def tracker(self):
+        return self.logger
+
+    @on_main_process
+    def store_init_configuration(self, values: dict):
+        self.logger.info("\n".join([f"{key}: {value}" for key, value in values.items()]))
+
+    @on_main_process
+    def log(self, values: dict, step: Optional[int] = None):
+        self.logger.info(" ".join([f"{key}: {value}" for key, value in values.items()]))
 
 def visualize(
     exp_type: Literal['toy', 'images', 'quantized_images', 'texts'],
