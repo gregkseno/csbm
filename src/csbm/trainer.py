@@ -1,6 +1,7 @@
 import os
 import sys
 from typing import Any, Literal, Optional, Union
+from contextlib import nullcontext
 
 from tqdm.auto import tqdm
 
@@ -20,11 +21,9 @@ from csbm.models.images import ImageD3PM
 from csbm.models.texts import TextD3PM
 
 from csbm.data import BaseDataset, CouplingDataset, Prior
-from csbm.metrics import (
-    FID, MSE, HammingDistance,
-    GenerativeNLL, EditDistance, 
-    ClassifierAccuracy, BLEUScore
-)
+from csbm.metrics import FID, CMMD, GenerativeNLL, ClassifierAccuracy
+from csbm.metrics import MSE, HammingDistance, EditDistance, BLEUScore
+from csbm.metrics import FID_WEIGHTS_URL
 from csbm.utils import visualize, visualize_trajectory
 from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 
@@ -42,10 +41,10 @@ class СSBMTrainer:
         use_mini_batch: bool,
         accelerator: Accelerator,
         forward_model: Union[D3PM, ImageD3PM, LatentD3PM, TextD3PM],
-        backward_model: Union[D3PM, ImageD3PM, LatentD3PM, TextD3PM],
+        backward_model: Optional[Union[D3PM, ImageD3PM, LatentD3PM, TextD3PM]],
         prior: Prior,
-        forward_optimizer: Optimizer,
-        backward_optimizer: Optimizer,
+        forward_optimizer: Optional[Optimizer],
+        backward_optimizer: Optional[Optimizer],
         forward_scheduler: Optional[ReduceLROnPlateauWithWarmup],
         backward_scheduler: Optional[ReduceLROnPlateauWithWarmup],
         codec: Optional[Codec] = None,
@@ -56,6 +55,7 @@ class СSBMTrainer:
         ce_loss_coeff: float = 0.001,
         mse_loss_coeff: float = 0.,
         ema_decay: float = 0.999,
+        eval_only: bool = False,
         eval_freq: int = 1000,
         num_trajectories: int = 4,
         num_translations: int = 5,
@@ -68,13 +68,17 @@ class СSBMTrainer:
         self.use_mini_batch = use_mini_batch
 
         self.accelerator = accelerator
+        if not eval_only:
+            assert backward_model is not None, 'Backward model must be provided!'
+            assert forward_optimizer is not None, 'Forward optimizer must be provided!'
+            assert backward_optimizer is not None, 'Backward optimizer must be provided!'
+            self.emas = {
+                'forward': EMA(forward_model.parameters(), decay=ema_decay),
+                'backward': EMA(backward_model.parameters(), decay=ema_decay)
+            }
         self.models = {
             'forward': forward_model,
             'backward': backward_model
-        }
-        self.emas = {
-            'forward': EMA(forward_model.parameters(), decay=ema_decay),
-            'backward': EMA(backward_model.parameters(), decay=ema_decay)
         }
         self.prior = prior
         self.codec = codec
@@ -102,17 +106,14 @@ class СSBMTrainer:
 
         if exp_type == 'quantized_images' or exp_type == 'images':
             self.fids = {
-                'forward': FID(
-                    feature=2048, 
-                    reset_real_features=False, 
-                    normalize=True
-                ).to(self.accelerator.device),
-                'backward': FID(
-                    feature=2048, 
-                    reset_real_features=False, 
-                    normalize=True
-                ).to(self.accelerator.device)
+                'forward': FID().to(self.accelerator.device),
+                'backward': FID().to(self.accelerator.device)
             }
+            if eval_only:
+                self.cmmds = {
+                    'forward': CMMD().to(self.accelerator.device),
+                    'backward': CMMD().to(self.accelerator.device)
+                }
             self.mses = {
                 'forward': MSE().to(self.accelerator.device),
                 'backward': MSE().to(self.accelerator.device)
@@ -148,6 +149,7 @@ class СSBMTrainer:
                 'backward': BLEUScore().to(self.accelerator.device)
             }
         
+        self.eval_only = eval_only
         self.eval_freq = eval_freq
         self.num_trajectories = num_trajectories
         self.num_translations = num_translations
@@ -196,7 +198,7 @@ class СSBMTrainer:
             self.step += 1
 
             with self.accelerator.accumulate():
-                self.optimizers[fb].zero_grad()
+                self.optimizers[fb].zero_grad() # type: ignore
 
                 if self.iteration == 1:
                     true_x_start, true_x_end = batch
@@ -235,7 +237,7 @@ class СSBMTrainer:
                 loss += self.ce_loss_coeff * ce_loss
 
                 self.accelerator.backward(loss)
-                self.optimizers[fb].step()
+                self.optimizers[fb].step() # type: ignore
                 if self.schedulers is not None:
                     self.schedulers[fb].step(kl_loss.detach())
                 self.emas[fb].update()
@@ -289,6 +291,7 @@ class СSBMTrainer:
 
             if self.exp_type == 'texts':
                 return # Skip trajectory visualization for texts
+            assert isinstance(test_x_end, torch.Tensor), f"No trajectory logging for texts!"
             
             if self.codec is not None:
                 traj_start = encoded_test_x_end[:self.num_trajectories]
@@ -303,7 +306,7 @@ class СSBMTrainer:
             # Reduce number of timesteps for visualization
             num_timesteps = trajectories.shape[0]
             trajectories = torch.stack([
-                trajectories[0], 
+                test_x_end, 
                 trajectories[num_timesteps // 8], 
                 trajectories[num_timesteps // 2], 
                 trajectories[(num_timesteps * 7) // 8], 
@@ -335,6 +338,8 @@ class СSBMTrainer:
     ):
         if self.exp_type == 'quantized_images' or self.exp_type == 'images':
             self.fids[fb].reset()
+            if self.eval_only:
+                self.cmmds[fb].reset()
             self.mses[fb].reset()
             if self.exp_type == 'quantized_images':
                 self.hammings[fb].reset()
@@ -353,7 +358,8 @@ class СSBMTrainer:
             file=sys.stdout, 
             disable=not self.accelerator.is_local_main_process
         )
-        with self.emas[fb].average_parameters():
+        context_manager = self.emas[fb].average_parameters if not self.eval_only else nullcontext
+        with context_manager():
             for test_x_start, test_x_end in trange:
                 if self.codec is not None:
                     encoded_test_x_end = self.codec.encode_to_cats(test_x_end)
@@ -369,6 +375,9 @@ class СSBMTrainer:
                         test_x_end = test_x_end / 255.0
                     self.fids[fb].update(test_x_start, real=True)
                     self.fids[fb].update(pred_x_start, real=False)
+                    if self.eval_only:
+                        self.cmmds[fb].update(test_x_start, real=True)
+                        self.cmmds[fb].update(pred_x_start, real=False)
                     self.mses[fb].update(pred_x_start, test_x_end)  
 
                     if self.exp_type == 'quantized_images':
@@ -390,6 +399,11 @@ class СSBMTrainer:
                 f'{fb}_mse': self.mses[fb].compute().detach()},
                 step=step
             )
+            if self.eval_only:
+                self.accelerator.log(
+                    {f'{fb}_cmmd': self.cmmds[fb].compute()[0].detach()},
+                    step=step
+                )
             if self.exp_type == 'quantized_images':
                 self.accelerator.log(
                     {f'{fb}_hamming': self.hammings[fb].compute().detach()},
