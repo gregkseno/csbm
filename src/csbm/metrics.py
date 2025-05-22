@@ -7,12 +7,11 @@ from torch import nn
 from torch.nn import functional as F
 
 from torchmetrics import Metric
-from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity as LPIPS
+from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.text import EditDistance, BLEUScore
 from torchmetrics.regression import MeanSquaredError as MSE
 from torchmetrics.classification import MulticlassHammingDistance as HammingDistance
-from torchmetrics.functional.text.perplexity import _perplexity_update
 from torch.hub import download_url_to_file
 
 from transformers import (
@@ -83,8 +82,6 @@ class CMMD(Metric):
         sigma: int = 
         10, scale: int = 1000
     ) -> torch.Tensor:
-        x = torch.from_numpy(x)
-        y = torch.from_numpy(y)
 
         x_sqnorms = torch.diag(torch.matmul(x, x.T))
         y_sqnorms = torch.diag(torch.matmul(y, y.T))
