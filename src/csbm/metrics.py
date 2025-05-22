@@ -1,18 +1,19 @@
 import os
 from typing import Any, List, Literal, Optional, Union
+from copy import deepcopy
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 from torchmetrics import Metric
-from torchmetrics.image.kid import KernelInceptionDistance
-from torchmetrics.image.fid import FrechetInceptionDistance as FID
+from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity as LPIPS
 from torchmetrics.text import EditDistance, BLEUScore
 from torchmetrics.regression import MeanSquaredError as MSE
 from torchmetrics.classification import MulticlassHammingDistance as HammingDistance
 from torchmetrics.functional.text.perplexity import _perplexity_update
+from torch.hub import download_url_to_file
 
 from transformers import (
     CLIPImageProcessor, 
@@ -28,32 +29,90 @@ FID_WEIGHTS_URL = 'https://github.com/mseitzer/pytorch-fid/releases/download/fid
 CLIP_MODEL_NAME = "openai/clip-vit-large-patch14-336"
 
 
-def _resize_bicubic(images, size):
-    """Resize images using bicubic interpolation."""
-    images = torch.from_numpy(images.transpose(0, 3, 1, 2))
-    images = torch.nn.functional.interpolate(images, size=(size, size), mode="bicubic")
-    images = images.permute(0, 2, 3, 1).numpy()
-    return images
+class FID(FrechetInceptionDistance):
+    def __init__(
+        self,
+        feature: Union[int, nn.Module] = 2048,
+        reset_real_features: bool = False,
+        normalize: bool = True,
+        input_img_size: tuple[int, int, int] = (3, 299, 299),
+        feature_extractor_weights_path: Optional[str] = 'checkpoints/fid_weights.ckpt',
+        **kwargs: Any,
+    ) -> None:
+        if feature_extractor_weights_path is not None:
+            if not os.path.exists(feature_extractor_weights_path):
+                os.makedirs(os.path.dirname(feature_extractor_weights_path), exist_ok=True)
+                print(f"Downloading FID weights to {feature_extractor_weights_path}...")
+                download_url_to_file(
+                    url=FID_WEIGHTS_URL, 
+                    dst=feature_extractor_weights_path,
+                    progress=True
+                )
+        super().__init__(
+            feature=feature,
+            reset_real_features=reset_real_features,
+            normalize=normalize,
+            input_img_size=input_img_size,
+            feature_extractor_weights_path=feature_extractor_weights_path,
+            **kwargs,
+        )
 
 
-class CLIPFeatureExtractor(nn.Module):
-    """Custom CLIP image embedding calculator adapted from https://github.com/sayakpaul/cmmd-pytorch."""
-
-    def __init__(self, model_name=CLIP_MODEL_NAME):
+class CMMD(Metric):
+    def __init__(
+        self,
+        reset_real_features: bool = False,
+        normalize: bool = True,
+        embedding_extractor_model: str = CLIP_MODEL_NAME,
+    ) -> None:
         super().__init__()
-        self.image_processor = CLIPImageProcessor.from_pretrained(model_name)
-        self.model = CLIPVisionModelWithProjection.from_pretrained(model_name).eval()
+        self.image_processor = CLIPImageProcessor.from_pretrained(embedding_extractor_model)
+        self.model = CLIPVisionModelWithProjection.from_pretrained(embedding_extractor_model).eval()
         self.input_image_size = self.image_processor.crop_size["height"]
+        self.normalize = normalize
+        self.reset_real_features = reset_real_features
+        self.is_resetted = False
+    
+        self.add_state("real_images", default=torch.zeros(0))
+        self.add_state("fake_images", default=torch.zeros(0))
 
-    @property
-    def device(self):
-        return next(self.parameters()).device
+    def _mmd(
+        self, 
+        x: torch.Tensor, 
+        y: torch.Tensor, 
+        sigma: int = 
+        10, scale: int = 1000
+    ) -> torch.Tensor:
+        x = torch.from_numpy(x)
+        y = torch.from_numpy(y)
 
-    def forward(self, images):
-        """Computes CLIP embeddings for a batch of images."""
-        images = _resize_bicubic(images, self.input_image_size)
+        x_sqnorms = torch.diag(torch.matmul(x, x.T))
+        y_sqnorms = torch.diag(torch.matmul(y, y.T))
+
+        gamma = 1 / (2 * sigma**2)
+        k_xx = torch.mean(
+            torch.exp(-gamma * (-2 * torch.matmul(x, x.T) + torch.unsqueeze(x_sqnorms, 1) + torch.unsqueeze(x_sqnorms, 0)))
+        )
+        k_xy = torch.mean(
+            torch.exp(-gamma * (-2 * torch.matmul(x, y.T) + torch.unsqueeze(x_sqnorms, 1) + torch.unsqueeze(y_sqnorms, 0)))
+        )
+        k_yy = torch.mean(
+            torch.exp(-gamma * (-2 * torch.matmul(y, y.T) + torch.unsqueeze(y_sqnorms, 1) + torch.unsqueeze(y_sqnorms, 0)))
+        )
+
+        return scale * (k_xx + k_yy - 2 * k_xy)
+
+    def update(self, imgs: torch.Tensor, real: bool) -> None:
+        if not self.reset_real_features and self.is_resetted and real:
+            # We dont want to update the real features 
+            # after reset if reset_real_features is False
+            return
+        imgs = (imgs / 255).float() if not self.normalize else imgs
+        imgs = F.interpolate(
+            imgs, size=(self.input_image_size, self.input_image_size), mode="bicubic"
+        )
         inputs = self.image_processor(
-            images=images,
+            images=imgs,
             do_normalize=True,
             do_center_crop=False,
             do_resize=False,
@@ -62,26 +121,28 @@ class CLIPFeatureExtractor(nn.Module):
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-        image_embs = self.model(**inputs).image_embeds.cpu()
+        image_embs = self.model(**inputs).image_embeds
         image_embs /= torch.linalg.norm(image_embs, axis=-1, keepdims=True)
-        return image_embs
+        if real:
+            self.real_images = torch.cat([self.real_images, image_embs], dim=0)
+        else:
+            self.fake_images = torch.cat([self.fake_images, image_embs], dim=0)
 
+    def compute(self) -> torch.Tensor:
+        return self._mmd(self.real_images, self.fake_images)
+    
+    def reset(self) -> None:
+        self.is_resetted = True
+        if not self.reset_real_features:
+            real_images = deepcopy(self.real_images)
+            super().reset()
+            self.real_images = real_images
+        else:
+            super().reset()    
 
-class CMMD(KernelInceptionDistance):
-    """CMMD: CLIP-based Maximum Mean Discrepancy (MMD) Metric."""
-
-    def __init__(self, subsets=100, subset_size=1000, degree=1, gamma=None, coef=1.0, **kwargs):
-        self.clip_feature_extractor = CLIPFeatureExtractor()
-
-        super().__init__(
-            feature=self.clip_feature_extractor,
-            subsets=subsets,
-            subset_size=subset_size,
-            degree=degree,
-            gamma=gamma,
-            coef=coef,
-            **kwargs
-        )
+    @property
+    def device(self):
+        return next(self.parameters()).device
 
 class GenerativeNLL(Metric):
     """Generative negative log-likelihood."""
