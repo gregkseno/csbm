@@ -14,6 +14,7 @@
 # 4 steps: ./experiments/images/gaussian/dim_32_aplha_0.01_29.01.25_10:02:47
 # 10 steps: ./experiments/images/gaussian/dim_32_aplha_0.01_28.01.25_15:30:39
 # 25 steps: ./experiments/images/gaussian/dim_32_aplha_0.01_29.01.25_20:37:01
+# 100 steps: ./experiments/images/cmnist/gaussian/dim_32_aplha_0.01_21.05.25_05:58:37
 # uniform 25 steps: ./experiments/images/cmnist/uniform/dim_32_aplha_0.01_26.03.25_18:13:18
 # uniform 25 steps: ./experiments/images/cmnist/uniform/dim_32_aplha_0.05_26.03.25_18:09:45
 
