@@ -305,7 +305,7 @@ class СSBMTrainer:
             # Reduce number of timesteps for visualization
             num_timesteps = trajectories.shape[0]
             trajectories = torch.stack([
-                test_x_end, 
+                test_x_end[:self.num_trajectories], 
                 trajectories[num_timesteps // 8], 
                 trajectories[num_timesteps // 2], 
                 trajectories[(num_timesteps * 7) // 8], 
