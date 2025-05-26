@@ -561,10 +561,11 @@ def uniform_prior(
     num_timesteps: int,
     num_skip_steps: int
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    p_onestep_mat = torch.tensor([alpha / (num_categories - 1)] * num_categories**2, dtype=torch.float32)
+    p_onestep_mat = torch.tensor([alpha] * num_categories**2, dtype=torch.float64)
+    p_onestep_mat = p_onestep_mat / (num_categories - 1)
     p_onestep_mat = p_onestep_mat.view(num_categories, num_categories)
     p_onestep_mat -= torch.diag(torch.diag(p_onestep_mat))
-    p_onestep_mat += torch.diag(torch.tensor([1 - alpha] * num_categories))
+    p_onestep_mat += torch.diag(torch.ones(num_categories, dtype=torch.float64) - alpha)
     p_onestep_mat = torch.matrix_power(p_onestep_mat, n=num_skip_steps)
 
     p_cum_mats = get_cum_matrices(num_timesteps + 2, p_onestep_mat)
@@ -600,14 +601,14 @@ def gaussian_prior(
     num_skip_steps: int,
     use_doubly_stochastic: bool = True
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    p_onestep_mat = np.zeros([num_categories, num_categories], dtype=np.float32)
+    p_onestep_mat = np.zeros([num_categories, num_categories], dtype=np.float64)
     max_distance = num_categories - 1
     if not use_doubly_stochastic:
         indices = np.arange(num_categories)[None, ...]
         values = (-4 * (indices - indices.T)**2) / ((alpha * max_distance)**2)
         p_onestep_mat = softmax(values, axis=1)
     else: # this logic mathcing D3PM article
-        norm_const = -4 * (np.arange(-max_distance, max_distance+2, step=1, dtype=np.float32) ** 2)
+        norm_const = -4 * (np.arange(-max_distance, max_distance+2, step=1, dtype=np.float64) ** 2)
         norm_const /= (alpha * max_distance)**2
         norm_const = np.exp(norm_const).sum()
         for i in range(num_categories):
@@ -673,6 +674,7 @@ class Prior(nn.Module):
         dtype: torch.dtype = torch.float32
     ) -> None:
         super().__init__()
+        self.alpha = alpha
         self.num_categories = num_categories
         self.num_timesteps = num_timesteps
         self.num_skip_steps = num_skip_steps
@@ -740,6 +742,15 @@ class Prior(nn.Module):
         is_final_step = broadcast(t, x_start.dim() - 1) == self.num_timesteps + 1
         x_t = torch.where(is_final_step, x_end, x_t)
         return x_t
+    
+    def bridge_logits(self, x_start: torch.Tensor, x_end: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        r"""Calculates log probability of $p(x_{t} | x_{0}, x_{1})$."""
+        p_start_t = self.extract('cumulative', t, row_id=x_start)
+        p_t_end = self.extract('cumulative', self.num_timesteps + 1 - t, column_id=x_end)
+        log_probs = torch.log(p_start_t + self.eps) + torch.log(p_t_end + self.eps)
+
+        log_probs = log_probs - log_probs.logsumexp(dim=-1, keepdim=True)
+        return log_probs
     
     def posterior_logits(
         self, 
