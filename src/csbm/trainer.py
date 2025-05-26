@@ -296,16 +296,20 @@ class СSBMTrainer:
                 traj_start = encoded_test_x_end[:self.num_trajectories]
             else:
                 traj_start = test_x_end[:self.num_trajectories]
-            repeats = [self.num_translations] + [1] * traj_start.dim() # type: ignore
-            trajectories = traj_start.unsqueeze(0).repeat(*repeats) # type: ignore
-            trajectories = trajectories.reshape(-1, *traj_start.shape[1:]) # type: ignore
+            repeats = [self.num_translations] + [1] * traj_start.dim()
+            trajectories = traj_start.unsqueeze(0).repeat(*repeats)
+            trajectories = trajectories.reshape(-1, *traj_start.shape[1:])
             trajectories = trajectories.to(self.accelerator.device)
             trajectories = self.models[fb].sample_trajectory(trajectories, self.prior)
 
+            # Repeating since for quantized images are decoded from latent space but we want original images
+            test_x_end = test_x_end[:self.num_trajectories].unsqueeze(0).repeat(*repeats)
+            test_x_end = test_x_end.reshape(-1, *traj_start.shape[1:])
+            
             # Reduce number of timesteps for visualization
             num_timesteps = trajectories.shape[0]
             trajectories = torch.stack([
-                test_x_end[:self.num_trajectories], 
+                test_x_end, 
                 trajectories[num_timesteps // 8], 
                 trajectories[num_timesteps // 2], 
                 trajectories[(num_timesteps * 7) // 8], 
