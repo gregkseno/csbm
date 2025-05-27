@@ -18,7 +18,7 @@ codec:
   ckpt_path: checkpoints/vqgan_celeba_f8_1024.ckpt
   config_path: configs/vqgan_celeba_f8_1024.yaml
 prior:
-  alpha: 0.0
+  alpha: 0.01
   type: uniform # choices: "uniform", "gaussian", "centroid_gaussian", "von_mises"
   eps: 1e-6
 train:
@@ -28,7 +28,7 @@ train:
   iterations: 20
   prior_iterations: 20
   inner_iterations: 20000
-  use_mini_batch: true
+  use_mini_batch: false
   ce_loss_coeff: 0.001
   kl_loss_coeff: 1
   mse_loss_coeff: 0

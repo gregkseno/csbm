@@ -1,9 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=train-celeba
+#SBATCH --job-name=eval-celeba
 #SBATCH --partition=ais-gpu
-#SBATCH --error=runs/train-celeba-%j.err
-#SBATCH --output=runs/train-celeba-%j.log
-#SBATCH --gpus=4
+#SBATCH --reservation=HPC-2507-3
+#SBATCH --error=runs/eval-celeba-%j.err
+#SBATCH --output=runs/eval-celeba-%j.log
+#SBATCH --gpus=1
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=30G
 #SBATCH --ntasks=1
@@ -15,11 +16,11 @@
 
 source activate csbm
 accelerate launch \
-    --num_processes=4 \
+    --num_processes=1 \
     --num_machines=1 \
     --mixed_precision='no' \
     --dynamo_backend='no' \
-    --main_process_port=32884 \
+    --main_process_port=32484 \
     scripts/eval.py \
         --exp_path './experiments/quantized_images/celeba/uniform/dim_128_aplha_0.005_14.03.25_00:25:49' \
         --iteration 4 \

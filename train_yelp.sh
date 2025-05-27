@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=train-yelp
 #SBATCH --partition=ais-gpu
-#SBATCH --reservation=HPC-2507
 #SBATCH --error=runs/train-yelp-%j.err
 #SBATCH --output=runs/train-yelp-%j.log
 #SBATCH --gpus=4

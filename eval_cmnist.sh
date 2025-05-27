@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=train-cmnist
+#SBATCH --job-name=eval-cmnist
 #SBATCH --partition=ais-gpu
-#SBATCH --error=runs/train-cmnist-%j.err
-#SBATCH --output=runs/train-cmnist-%j.log
+#SBATCH --error=runs/eval-cmnist-%j.err
+#SBATCH --output=runs/eval-cmnist-%j.log
 #SBATCH --gpus=2
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=30G
@@ -24,7 +24,7 @@ accelerate launch \
     --num_machines=1 \
     --mixed_precision='no' \
     --dynamo_backend='no' \
-    --main_process_port=32883 \
+    --main_process_port=32183 \
     scripts/eval.py \
         --exp_path './experiments' \
         --iteration 3 \

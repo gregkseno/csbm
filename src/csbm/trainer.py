@@ -22,7 +22,7 @@ from csbm.models.texts import TextD3PM
 
 from csbm.data import BaseDataset, CouplingDataset, Prior
 from csbm.metrics import FID, CMMD, GenerativeNLL, ClassifierAccuracy
-from csbm.metrics import MSE, HammingDistance, EditDistance, BLEUScore
+from csbm.metrics import MSE, LPIPS, HammingDistance, EditDistance, BLEUScore
 from csbm.utils import visualize, visualize_trajectory
 from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 
@@ -31,6 +31,7 @@ class СSBMTrainer:
     exp_type: Literal['toy', 'images', 'quantized_images', 'texts']
     forward_and_backward = {'forward', 'backward'}
     checkpoint_path = 'EMPTY'
+    iteration = 0
 
     def __init__(
         self,
@@ -113,6 +114,10 @@ class СSBMTrainer:
                     'forward': CMMD().to(self.accelerator.device),
                     'backward': CMMD().to(self.accelerator.device)
                 }
+            self.lpips = {
+                'forward': LPIPS(normalize=True).to(self.accelerator.device),
+                'backward': LPIPS(normalize=True).to(self.accelerator.device)
+            }
             self.mses = {
                 'forward': MSE().to(self.accelerator.device),
                 'backward': MSE().to(self.accelerator.device)
@@ -343,6 +348,7 @@ class СSBMTrainer:
             self.fids[fb].reset()
             if self.eval_only:
                 self.cmmds[fb].reset()
+                self.lpips[fb].reset()
             self.mses[fb].reset()
             if self.exp_type == 'quantized_images':
                 self.hammings[fb].reset()
@@ -381,6 +387,7 @@ class СSBMTrainer:
                     if self.eval_only:
                         self.cmmds[fb].update(test_x_start, real=True)
                         self.cmmds[fb].update(pred_x_start, real=False)
+                        self.lpips[fb].update(pred_x_start, test_x_end)
                     self.mses[fb].update(pred_x_start, test_x_end)  
 
                     if self.exp_type == 'quantized_images':
@@ -399,12 +406,13 @@ class СSBMTrainer:
         if self.exp_type == 'quantized_images' or self.exp_type == 'images':  
             self.accelerator.log(
                 {f'{fb}_fid': self.fids[fb].compute().detach(),
-                f'{fb}_mse': self.mses[fb].compute().detach()},
+                 f'{fb}_mse': self.mses[fb].compute().detach()},
                 step=step
             )
             if self.eval_only:
                 self.accelerator.log(
-                    {f'{fb}_cmmd': self.cmmds[fb].compute()[0].detach()},
+                    {f'{fb}_cmmd': self.cmmds[fb].compute()[0].detach(),
+                     f'{fb}_lpips': self.lpips[fb].compute().detach()},
                     step=step
                 )
             if self.exp_type == 'quantized_images':

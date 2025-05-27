@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=train-swiss-roll
 #SBATCH --partition=ais-gpu
-#SBATCH --reservation=HPC-2507
 #SBATCH --error=runs/train-swiss-roll-%j.err
 #SBATCH --output=runs/train-swiss-roll-%j.log
 #SBATCH --gpus=1

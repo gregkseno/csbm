@@ -3,9 +3,10 @@ from omegaconf.dictconfig import DictConfig
 from omegaconf.listconfig import ListConfig
 
 from datetime import datetime
-from typing import Any, List, Literal, Optional, Tuple
+from typing import Any, List, Literal, Optional, Tuple, Callable
 
 import json
+import logging
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -63,20 +64,21 @@ class ConsoleTracker(GeneralTracker):
     name = "console"
     requires_logging_directory = False
 
-    def __init__(self, logger_name: str):
-        self.logger = get_logger(logger_name)
+    def __init__(self, print_fn: Optional[Callable] = None):
+        if print_fn is None:
+            self.print_fn = print
 
     @property
     def tracker(self):
-        return self.logger
+        return self.print_fn
 
     @on_main_process
     def store_init_configuration(self, values: dict):
-        self.logger.info("\n".join([f"{key}: {value}" for key, value in values.items()]))
+        self.print_fn("\n".join([f"{key}: {value}" for key, value in values.items()]))
 
     @on_main_process
     def log(self, values: dict, step: Optional[int] = None):
-        self.logger.info(" ".join([f"{key}: {value}" for key, value in values.items()]))
+        self.print_fn(" ".join([f"{key}: {value}" for key, value in values.items()]))
 
 def visualize(
     exp_type: Literal['toy', 'images', 'quantized_images', 'texts'],

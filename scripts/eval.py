@@ -40,7 +40,7 @@ if __name__ == '__main__':
     data_dir = args.data_dir
     args = OmegaConf.load(os.path.join(exp_path, 'config.yaml'))
 
-    accelerator = Accelerator(log_with=ConsoleTracker('csbm'))
+    accelerator = Accelerator(log_with=ConsoleTracker())
     accelerator.init_trackers('csbm', config=OmegaConf.to_object(args)) # type: ignore
     accelerator.print(f'Evaluating experiment with:\n{OmegaConf.to_yaml(args)}')    
 
@@ -77,14 +77,14 @@ if __name__ == '__main__':
             assert tokenizer is not None, 'Tokenizer is not initialized!'
             trainset_x = YelpDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim)
             trainset_y = YelpDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim)
-            testset_x = YelpDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='eval')
-            testset_y = YelpDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='eval')
+            testset_x = YelpDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='test')
+            testset_y = YelpDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='test')
         elif args.data.dataset == 'amazon':
             assert tokenizer is not None, 'Tokenizer is not initialized!'
             trainset_x = AmazonDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim)
             trainset_y = AmazonDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim)
-            testset_x = AmazonDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='eval')
-            testset_y = AmazonDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='eval')
+            testset_x = AmazonDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='test')
+            testset_y = AmazonDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='test')
         else:
             raise NotImplementedError(f"The evaluation is not implemented for {args.data.type} exp!")
 
@@ -165,12 +165,14 @@ if __name__ == '__main__':
         ce_loss_coeff=args.train.ce_loss_coeff,
         mse_loss_coeff=args.train.mse_loss_coeff,
         ema_decay=args.train.ema_decay,
+        eval_only=True,
         exp_type=args.data.type,
         exp_path=exp_path,
         eval_freq=args.eval.freq,
         num_trajectories=args.eval.num_trajectories,
         num_translations=args.eval.num_translations,
     )
+    trainer.iteration = iteration
 
     testset = CouplingDataset(testset_y, conditional=testset_x)
     testloader = DataLoader(testset, batch_size=args.eval.num_samples)
