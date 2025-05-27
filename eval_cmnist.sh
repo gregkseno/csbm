@@ -3,8 +3,8 @@
 #SBATCH --partition=ais-gpu
 #SBATCH --error=runs/eval-cmnist-%j.err
 #SBATCH --output=runs/eval-cmnist-%j.log
-#SBATCH --gpus=2
-#SBATCH --cpus-per-task=12
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=3
 #SBATCH --mem=30G
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
@@ -20,7 +20,7 @@
 
 source activate csbm
 accelerate launch \
-    --num_processes=2 \
+    --num_processes=1 \
     --num_machines=1 \
     --mixed_precision='no' \
     --dynamo_backend='no' \

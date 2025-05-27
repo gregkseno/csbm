@@ -344,23 +344,8 @@ class СSBMTrainer:
         dataloader: DataLoader,
         step: Optional[int]
     ):
-        if self.exp_type == 'quantized_images' or self.exp_type == 'images':
-            self.fids[fb].reset()
-            if self.eval_only:
-                self.cmmds[fb].reset()
-                self.lpips[fb].reset()
-            self.mses[fb].reset()
-            if self.exp_type == 'quantized_images':
-                self.hammings[fb].reset()
-        elif self.exp_type == 'texts':
-            self.accuracy[fb].reset()
-            self.gen_nll[fb].reset()
-            self.edit_distances[fb].reset()   
-            self.bleu[fb].reset()         
-        else:
-            raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
+        # Fill metrics
         self.models[fb].eval()
-
         trange = tqdm(
             dataloader, 
             desc=f'{fb.capitalize()} D-IMF evaluation: {self.iteration}', 
@@ -402,7 +387,8 @@ class СSBMTrainer:
                     self.bleu[fb].update(pred_x_start, [[text] for text in test_x_end])
                 else:
                     raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
-
+        
+        # Compute and log metrics
         if self.exp_type == 'quantized_images' or self.exp_type == 'images':  
             self.accelerator.log(
                 {f'{fb}_fid': self.fids[fb].compute().detach(),
@@ -411,7 +397,7 @@ class СSBMTrainer:
             )
             if self.eval_only:
                 self.accelerator.log(
-                    {f'{fb}_cmmd': self.cmmds[fb].compute()[0].detach(),
+                    {f'{fb}_cmmd': self.cmmds[fb].compute().detach(),
                      f'{fb}_lpips': self.lpips[fb].compute().detach()},
                     step=step
                 )
@@ -428,6 +414,23 @@ class СSBMTrainer:
                  f'{fb}_bleu': self.bleu[fb].compute().detach()},
                 step=step
             )
+        else:
+            raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
+        
+        # Reset metrics
+        if self.exp_type == 'quantized_images' or self.exp_type == 'images':
+            self.fids[fb].reset()
+            if self.eval_only:
+                self.cmmds[fb].reset()
+                self.lpips[fb].reset()
+            self.mses[fb].reset()
+            if self.exp_type == 'quantized_images':
+                self.hammings[fb].reset()
+        elif self.exp_type == 'texts':
+            self.accuracy[fb].reset()
+            self.gen_nll[fb].reset()
+            self.edit_distances[fb].reset()   
+            self.bleu[fb].reset()         
         else:
             raise NotImplementedError(f"Unknown exp type {self.exp_type}!")
 

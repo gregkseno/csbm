@@ -57,32 +57,22 @@ if __name__ == '__main__':
     accelerator.print('Loading dataset...')
     with accelerator.main_process_first(): # Avoid creating dirs at the same time
         if args.data.dataset == 'cmnist':
-            trainset_x = DiscreteColoredMNISTDataset(target_digit=3, data_dir=data_dir)
-            trainset_y = DiscreteColoredMNISTDataset(target_digit=2, data_dir=data_dir)
             testset_x = DiscreteColoredMNISTDataset(target_digit=3, data_dir=data_dir, train=False)
             testset_y = DiscreteColoredMNISTDataset(target_digit=2, data_dir=data_dir, train=False)
         elif args.data.dataset == 'celeba':
             # Train set is already quantized, so, we do not set size explicitly
-            trainset_x = CelebaDataset(sex='male', size=args.data.dim, data_dir=data_dir, split=args.data.train_test_split)
-            trainset_y = CelebaDataset(sex='female', size=args.data.dim, data_dir=data_dir, split=args.data.train_test_split)
             testset_x = CelebaDataset(sex='male', use_quantized=False, size=args.data.dim, data_dir=data_dir, train=False, split=args.data.train_test_split)
             testset_y = CelebaDataset(sex='female', use_quantized=False, size=args.data.dim, data_dir=data_dir, train=False, split=args.data.train_test_split)
         elif args.data.dataset == 'afhq':
             # Train set is already quantized, so, we do not set size explicitly
-            trainset_x = AFHQDataset(animal_type='cat', size=args.data.dim, data_dir=data_dir)
-            trainset_y = AFHQDataset(animal_type='wild', size=args.data.dim, data_dir=data_dir)
             testset_x = AFHQDataset(animal_type='cat', use_quantized=False, size=args.data.dim, data_dir=data_dir, train=False)
             testset_y = AFHQDataset(animal_type='wild', use_quantized=False, size=args.data.dim, data_dir=data_dir, train=False)
         elif args.data.dataset == 'yelp':
             assert tokenizer is not None, 'Tokenizer is not initialized!'
-            trainset_x = YelpDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim)
-            trainset_y = YelpDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim)
             testset_x = YelpDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='test')
             testset_y = YelpDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='test')
         elif args.data.dataset == 'amazon':
             assert tokenizer is not None, 'Tokenizer is not initialized!'
-            trainset_x = AmazonDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim)
-            trainset_y = AmazonDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim)
             testset_x = AmazonDataset(sentiment='negative', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='test')
             testset_y = AmazonDataset(sentiment='positive', data_dir=data_dir, tokenizer=tokenizer, max_length=args.data.dim, split='test')
         else:
@@ -95,6 +85,7 @@ if __name__ == '__main__':
             config_path=args.codec.config_path,
             ckpt_path=args.codec.ckpt_path,     
         )
+        accelerator.print(f'Number of parameters in codec: {sum(p.numel() for p in codec.parameters())}')
         if args.prior.type == 'centroid_gaussian':
             centroids = codec.centroids
 
@@ -129,6 +120,7 @@ if __name__ == '__main__':
         num_timesteps=args.data.num_timesteps,
         **OmegaConf.to_object(args.model) # type: ignore
     )
+    accelerator.print(f'Number of parameters in model: {sum(p.numel() for p in model.parameters())}')
     checkpoint_path = os.path.join(
         exp_path, 'checkpoints', f'forward_{iteration}', 'model.safetensors'
     )
@@ -175,7 +167,7 @@ if __name__ == '__main__':
     trainer.iteration = iteration
 
     testset = CouplingDataset(testset_y, conditional=testset_x)
-    testloader = DataLoader(testset, batch_size=args.eval.num_samples)
+    testloader = DataLoader(testset, batch_size=args.train.batch_size)
     testloader = accelerator.prepare(testloader)
 
     trainer.eval(
