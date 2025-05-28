@@ -319,7 +319,7 @@ def visualize_trajectory_toy(
                 "grey", markeredgecolor="black", linewidth=0.5, zorder=2
             )
     if use_legend:
-        ax.legend(loc="upper left")
+        ax.legend(loc="lower left")
 
     if axlim is not None:
         ax.set_xlim(axlim)
