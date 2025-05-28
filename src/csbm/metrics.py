@@ -147,7 +147,7 @@ class GenerativeNLL(Metric):
     def __init__(
         self,
         gen_ppl_model: str = 'gpt2-large',
-        context_len: int = 1,
+        stride: int = 1,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -162,7 +162,7 @@ class GenerativeNLL(Metric):
             gen_ppl_model
         )
         self.model.eval()
-        self.context_len = context_len
+        self.stride = stride
         self.max_len = self.model.config.n_positions
 
         self.tokenizer_kwargs = {
@@ -176,7 +176,7 @@ class GenerativeNLL(Metric):
         seq_len = encodings.input_ids.shape[1]
         prev_end_loc = 0
 
-        for begin_loc in range(0, seq_len, self.context_len):
+        for begin_loc in range(0, seq_len, self.stride):
             end_loc = min(begin_loc + self.max_len, seq_len)
             trg_len = end_loc - prev_end_loc
             input_ids = encodings.input_ids[:, begin_loc:end_loc].to(self.device)
@@ -195,7 +195,7 @@ class GenerativeNLL(Metric):
                 break
 
     def compute(self) -> torch.Tensor:
-        return self.nlls.sum() # type: ignore
+        return self.nlls.mean() # type: ignore
         
     @property
     def device(self):

@@ -379,8 +379,8 @@ class СSBMTrainer:
                         self.hammings[fb].update(encoded_pred_x_start, encoded_test_x_end)
                     
                 elif self.exp_type == 'texts' and self.tokenizer is not None:
-                    pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu()) 
-                    test_x_end = self.tokenizer.batch_decode(test_x_end.cpu())
+                    pred_x_start = self.tokenizer.batch_decode(pred_x_start.cpu(), skip_special_tokens=True) 
+                    test_x_end = self.tokenizer.batch_decode(test_x_end.cpu(), skip_special_tokens=True)
                     self.accuracy[fb].update(pred_x_start)
                     self.gen_nll[fb].update(pred_x_start)
                     self.edit_distances[fb].update(pred_x_start, test_x_end)
