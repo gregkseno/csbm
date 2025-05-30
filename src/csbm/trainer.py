@@ -23,7 +23,7 @@ from csbm.models.texts import TextD3PM
 from csbm.data import BaseDataset, CouplingDataset, Prior
 from csbm.metrics import FID, CMMD, GenerativeNLL, ClassifierAccuracy
 from csbm.metrics import MSE, LPIPS, HammingDistance, EditDistance, BLEUScore
-from csbm.utils import visualize, visualize_trajectory
+from csbm.utils import broadcast, visualize, visualize_trajectory
 from csbm.vq_diffusion.engine.lr_scheduler import ReduceLROnPlateauWithWarmup
 
 
@@ -226,13 +226,16 @@ class СSBMTrainer:
 
                 # KL-loss calculation
                 true_q_posterior_logits = self.prior.posterior_logits(true_x_start, x_t, t, logits=False) # Version of DDPM
-                pred_q_posterior_logits = self.prior.posterior_logits(pred_x_start_logits, x_t, t, logits=True)
-                kl_loss = self.kl_loss(true_q_posterior_logits, pred_q_posterior_logits)
+                pred_q_transition_logits = self.prior.posterior_logits(pred_x_start_logits, x_t, t, logits=True)
+                kl_loss = self.kl_loss(true_q_posterior_logits, pred_q_transition_logits)
                 loss += self.kl_loss_coeff * kl_loss
 
                 # MSE-loss calculation
-                true_probs = torch.softmax(true_q_posterior_logits, dim=-1)
-                pred_probs = torch.softmax(pred_q_posterior_logits, dim=-1)
+                true_probs = self.prior.p_onestep.T[x_t]
+                x_start_probs = F.one_hot(true_x_start, self.prior.num_categories)
+                is_first_step = broadcast(t, x_t.dim()) == 1
+                true_probs = torch.where(is_first_step, x_start_probs, true_probs)
+                pred_probs = torch.softmax(pred_q_transition_logits, dim=-1)
                 mse = F.mse_loss(true_probs, pred_probs)
                 loss += self.mse_loss_coeff * mse
 

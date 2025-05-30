@@ -10,8 +10,8 @@ model:
   timestep_dim: 2
   layers: [128, 128, 128]
 prior:
-  alpha: 0.01
-  type: uniform # choices: "uniform", "gaussian", "von_mises"
+  alpha: 0.02
+  type: gaussian # choices: "uniform", "gaussian", "von_mises"
   eps: 1e-20
 train:
   batch_size: 512
@@ -21,9 +21,9 @@ train:
   prior_iterations: 10
   inner_iterations: 20000
   use_mini_batch: false
-  ce_loss_coeff: 0.001 # 0.001
-  kl_loss_coeff: 1 # 1
-  mse_loss_coeff: 0
+  ce_loss_coeff: 0 # 0.001
+  kl_loss_coeff: 0 # 1
+  mse_loss_coeff: 1
   ema_decay: 0.999
   optimizer:
     lr: 0.0004

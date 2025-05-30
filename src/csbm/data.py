@@ -759,7 +759,8 @@ class Prior(nn.Module):
         t: torch.Tensor, 
         logits: bool = False
     ) -> torch.Tensor:
-        r"""Calculates logits of $p(x_{t-1} | x_{t}, x_{0})$.""" 
+        r"""Calculates logits of $p(x_{t-1} | x_{t}, x_{0})$.
+        If logits is True, the output is summed over x_0 and transition matrix returned.""" 
         if not logits:
             x_start_logits = torch.log(torch.nn.functional.one_hot(x_start, self.num_categories) + self.eps)
         else:
