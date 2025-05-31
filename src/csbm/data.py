@@ -741,6 +741,10 @@ class Prior(nn.Module):
 
         is_final_step = broadcast(t, x_start.dim() - 1) == self.num_timesteps + 1
         x_t = torch.where(is_final_step, x_end, x_t)
+
+        is_first_step = broadcast(t, x_start.dim() - 1) == 1
+        x_t = torch.where(is_first_step, x_start, x_t)
+
         return x_t
     
     def bridge_logits(self, x_start: torch.Tensor, x_end: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
