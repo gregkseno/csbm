@@ -277,7 +277,7 @@ def visualize_trajectory_toy(
     if figsize is None:
         figsize = (8, 8)
     fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
-    ax.grid(zorder=-20)
+    # ax.grid(zorder=-20)
     ax.get_xaxis().set_ticklabels([])
     ax.get_yaxis().set_ticklabels([])
     if iteration is not None:
@@ -289,34 +289,34 @@ def visualize_trajectory_toy(
 
     ax.scatter(
         pred_x_start[:, 0], pred_x_start[:, 1], 
-        c="salmon", s=25, edgecolors="black", 
-        label = "Fitted distribution", zorder=1, linewidth=0.5
+        c="salmon", s=40, edgecolors="black", 
+        label = "Fitted distribution", zorder=1, linewidth=0.8
     )
     ax.scatter(
         trajectories[0, :, 0], trajectories[0, :, 1], 
-        c="lime", s=60, edgecolors="black", 
+        c="lime", s=96, edgecolors="black", 
         label=r"Trajectory start ($x \sim p_0$)", zorder=3
     )
     ax.scatter(
         trajectories[-1, :, 0], trajectories[-1, :, 1], 
-        c="yellow", s=22, edgecolors="black", 
+        c="yellow", s=35, edgecolors="black", 
         label = r"Trajectory end (fitted)", zorder=3
     )
     for i in range(num_trajectories):
         ax.plot(
             trajectories[:, i, 0], trajectories[:, i, 1], 
-            "black", markeredgecolor="black", linewidth=1.5, zorder=2
+            "black", markeredgecolor="black", linewidth=2, zorder=2
         )
         if i == 0:
             ax.plot(
                 trajectories[:, i, 0], trajectories[:, i, 1], 
-                "grey", markeredgecolor="black", linewidth=0.5, zorder=2, 
+                "grey", markeredgecolor="black", linewidth=1, zorder=2, 
                 label="Intermediate predictions"
             )
         else:
             ax.plot(
                 trajectories[:, i, 0], trajectories[:, i, 1], 
-                "grey", markeredgecolor="black", linewidth=0.5, zorder=2
+                "grey", markeredgecolor="black", linewidth=1, zorder=2
             )
     if use_legend:
         ax.legend(loc="lower left")
