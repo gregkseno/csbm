@@ -1,6 +1,27 @@
-# Categorical Schrödinger Bridge Matching
+<div align="center">
 
-## Requirements
+# Categorical Schrödinger Bridge Matching (ICML 2025)
+
+[Grigoriy Ksenofontov](https://scholar.google.com/citations?user=e0mirzYAAAAJ),
+[Alexander Korotin](https://scholar.google.ru/citations?user=1rIIvjAAAAAJ)
+
+[![arXiv Paper](https://img.shields.io/badge/arXiv-PDF-b31b1b)](https://arxiv.org/abs/2502.01416)
+[![OpenReview Paper](https://img.shields.io/badge/OpenReview-PDF-8c1b13)](https://openreview.net/forum?id=RBly0nOr2h)
+[![GitHub](https://img.shields.io/github/stars/gregkseno/csbm?style=social)](https://github.com/gregkseno/csbm)
+![GitHub License](https://img.shields.io/github/license/gregkseno/csbm)
+[![WandB](https://img.shields.io/badge/W%26B-view-FFCC33?logo=wandb)](https://wandb.ai/gregkseno/csbm)
+
+</div>
+
+This repository contains the official implementation of the paper "Categorical Schrödinger Bridge Matching", submitted to ICML 2025.
+
+## 📌 TL;DR
+
+This paper extends the Schrödinger Bridge problem to work with discrete time and spaces.
+
+<!-- ![teaser](./images/teaser.png) -->
+
+## 📦 Dependencies
 
 Create the Anaconda environment using the following command:
 
@@ -8,120 +29,69 @@ Create the Anaconda environment using the following command:
 conda env create -f environment.yml
 ```
 
-### Dataset Preparation
+## 🛠️ Preparations
 
-Download the CelebA dataset from [Kaggle](https://www.kaggle.com/datasets/jessicali9530/celeba-dataset/data) and unzip it. Follow these steps to prepare the dataset:
+### Download Datasets
 
-1. Rename the dataset folder to `celeba`.
-2. Rename the folder `celeba/img_align_celeba/img_align_celeba` to `celeba/img_align_celeba/raw`.
+1. Use [this link](https://www.kaggle.com/datasets/jessicali9530/celeba-dataset/data) to obtain the CelebA dataset;
+2. Follow [these instructions](https://github.com/clovaai/stargan-v2/blob/master/README.md#animal-faces-hq-dataset-afhq) to obtain the AFHQv2 dataset.
 
-## Training
+Additionally, for the CelebA dataset, rename the main folder to `celeba`, then rename `celeba/img_align_celeba/img_align_celeba` to `celeba/img_align_celeba/raw`.
 
-### Experiment Directory Structure
+### Train VQ-GAN
 
-By specifying the `exp_dir` parameter in all `train_*.sh` scripts, you can set a custom path for saving experiment results.
+1. Configure the appropriate configuration file `configs/vqgan_*.yaml`. 
+2. Run the corresponding `quantize_*.sh` script to save quantized images as `.npy` files in `celeba/img_align_celeba/quantized/` or `afhq/*/*/`.
 
-The `exp_dir` structure is as follows:
+> [!TIP]
+> For more details on training VQ-GAN, refer to [the official repository](https://github.com/CompVis/taming-transformers).
 
-```bash
-|-- images
-|   `-- cmnist
-|       `-- gaussian
-|           |-- checkpoints 
-|           |   |-- forward_*
-|           |   |   `-- model.safetensors
-|           |   |-- ...
-|           |   |-- backward_*
-|           |   `-- ...
-|           |-- samples (generated images)
-|           |-- trajectories (image trajectories)
-|           `-- config.yaml (copied config)
-|-- quantized_images
-|   |-- afhq
-|   |   `-- uniform
-|   |       |-- ...
-|   |       ...
-|   `-- celeba
-|       `-- uniform
-|           |-- ...
-|           ...
-|-- toy
-|   `-- swiss_roll
-|       |-- gaussian
-|       |   |-- ...
-|       |   ...
-|       `-- uniform
-|           |-- ...
-|           ...
-`-- text
-    `-- yelp
-        `-- uniform
-            |-- ...
-```
+### Train Tokenizer
 
-### 2D Experiment
+1. Set `tokenizer.path` in the main config file `configs/amazon.yaml` or `configs/yelp.yaml`
+2. Run `train_tokenizer_*.sh` to train the tokenizer.
 
-To train on the *Gaussian-to-Swiss roll* dataset, run:
 
-```bash
-bash train_toy.sh
-```
+## 🏋️‍♂️ Training
 
-To modify training parameters, edit `configs/toy.yaml` and specify Accelerate parameters in `train_toy.sh`.
+1. Set the corresponding configuration files;
+2. Use the appropriate scripts or notebooks.
 
-### Colored MNIST
+| Experiment name                                 | Script/Notebook                    | Configs (`config/`) | Weights |
+| ---------------------------------------------- | ----------------------------------- | ------- | ------- |
+| Convergence of D-IMF on Discrete Spaces        | `notebooks/convergence_d_imf.ipynb` |  N/A | N/A |
+| Illustrative 2D Experiments                    | `train_swiss_roll.sh` |  `swiss_roll.yaml` | N/A |
+| Unpaired Translation on Colored MNIST          | `train_cmnist.sh` |  `cmnist.yaml` | N/A |
+| Unpaired Translation of CelebA Faces           | `train_celeba.sh` |  `celeba.yaml`, `vqgan_celeba_f8_1024.yaml` | N/A |
+| Unpaired Translation of AFHQ Faces             | `train_afhq.sh` |  `afhq.yaml`, `vqgan_afhq_f32_1024.yaml` | N/A |
+| Unpaired Text Style Transfer of Amazon Reviews | `train_amazon.sh` |  `amazon.yaml` | N/A |
+| Unpaired Text Style Transfer of Yelp Reviews   | `train_yelp.sh` |  `yelp.yaml` | N/A |
 
-To train the *3-to-2 digits* translation, run:
+> [!TIP] 
+> Set the `exp_dir` parameter in any `train_*.sh` script to define a custom path for saving experiment results, following the structure below:
+> ```bash
+> data.type
+> `-- data.dataset
+>    `-- prior.type
+>        |-- checkpoints 
+>        |   |-- forward_*
+>        |   |   `-- model.safetensors
+>        |   |-- ...
+>        |   |-- backward_*
+>        |   `-- ...
+>        |-- samples      # images of samples
+>        |-- trajectories # images of trajectories
+>        `-- config.yaml  # copied config
+> ```
 
-```bash
-bash train_images.sh
-```
+## 📊 Evaluation
 
-Modify training parameters in `configs/images.yaml` and specify Accelerate parameters in `train_images.sh`.
+1. Specify the `exp_path` parameter, pointing to the saved experiment folder;
+2. Run `eval_*.sh` with appropriate `iteration` argument.
 
-### CelebA
+> [!IMPORTANT]
+> Reusing an earlier evaluation pipeline for CelebA dataset may yield different results. In the article, images were generated first (see `scripts/generate.py`) and then evaluated with the following metrics (see `notebooks/eval.ipynb`):
+> * **FID** from [pytorch-fid](https://github.com/mseitzer/pytorch-fid)
+> * **CMMD** from [cmmd-pytorch](https://github.com/sayakpaul/cmmd-pytorch)
+> * **LPIPS** from [torchmetrics](https://lightning.ai/docs/torchmetrics/stable/image/learned_perceptual_image_patch_similarity.html)
 
-#### VQ-GAN Pretraining
-
-Before training the *male-to-female* translation, you must train a VQ-GAN model. Follow the official repository: [CompVis/taming-transformers](https://github.com/CompVis/taming-transformers).
-
-The config used in our article is `configs/vqgan_celeba_f8_1024.yaml`.
-
-#### Quantizing CelebA Images
-
-CelebA images must be pre-quantized before training. Run the following script:
-
-```bash
-bash quantize_images.sh
-```
-
-Specify the VQ-GAN config and checkpoint by providing `quantized_images.yaml` in `quantize_images.sh`. This script generates quantized images as vectorized numpy arrays in `celeba/img_align_celeba/quantized`.
-
-#### Training CelebA
-
-To train the quantized CelebA model, run:
-
-```bash
-bash train_quantized_images.sh
-```
-
-Modify training parameters in `configs/train_quantized_images.yaml` and specify Accelerate parameters in `train_quantized_images.sh`.
-
-## Evaluation
-
-To evaluate the CelebA experiment, run:
-
-```bash
-bash generate_quantized_images.sh
-```
-
-Specify the `exp_path` parameter, pointing to the saved experiment folder. You can also provide a list of iterations at which models should generate images. The generated images will be saved in:
-
-```bash
-exp_path/checkpoints/{forward_or_backward}_{iteration}/generations
-```
-
-To calculate FID and CMMD, use any available implementations, such as:
-
-- [pytorch-fid](https://github.com/mseitzer/pytorch-fid)
-- [cmmd-pytorch](https://github.com/sayakpaul/cmmd-pytorch)
