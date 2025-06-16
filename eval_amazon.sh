@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=eval-amazon
 #SBATCH --partition=ais-gpu
-#SBATCH --reservation=HPC-2507-3
 #SBATCH --error=runs/eval-amazon-%j.err
 #SBATCH --output=runs/eval-amazon-%j.log
 #SBATCH --gpus=1

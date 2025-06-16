@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=quantize-celeba
 #SBATCH --partition=ais-gpu
-#SBATCH --reservation=HPC-2507
 #SBATCH --error=runs/quantize-celeba-%j.err
 #SBATCH --output=runs/quantize-celeba-%j.log
 #SBATCH --gpus=1

@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=eval-celeba
 #SBATCH --partition=ais-gpu
-#SBATCH --reservation=HPC-2507-3
 #SBATCH --error=runs/eval-celeba-%j.err
 #SBATCH --output=runs/eval-celeba-%j.log
 #SBATCH --gpus=1
