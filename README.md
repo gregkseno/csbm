@@ -71,9 +71,9 @@ Additionally, for the CelebA dataset, rename the main folder to `celeba`, then r
 > Set the `exp_dir` parameter in any `train_*.sh` script to define a custom path for saving experiment results, following the structure below:
 >
 > ```bash
-> data.type               # e.g. toy, images, etc.
-> `-- data.dataset        # e.g. swiss_roll, cmnist, etc. 
->    `-- prior.type       # e.g. gaussian, uniform, etc. 
+> data.type               # e.g., toy, images, etc.
+> `-- data.dataset        # e.g., swiss_roll, cmnist, etc. 
+>    `-- prior.type       # e.g., gaussian, uniform, etc. 
 >        |-- checkpoints 
 >        |   |-- forward_*
 >        |   |   `-- model.safetensors
@@ -88,10 +88,10 @@ Additionally, for the CelebA dataset, rename the main folder to `celeba`, then r
 ## 📊 Evaluation
 
 1. Specify the `exp_path` parameter, pointing to the saved experiment folder;
-2. Run `eval_*.sh` with appropriate `iteration` argument.
+2. Run `eval_*.sh` with the appropriate `iteration` argument.
 
 > [!IMPORTANT]
-> Reusing an earlier evaluation pipeline for CelebA dataset may yield different results. In the article, images were generated first (see `scripts/generate.py`) and then evaluated with the following metrics (see `notebooks/eval.ipynb`):
+> Reusing an earlier evaluation pipeline for the CelebA dataset may yield different results. In the article, images were generated first (see `scripts/generate.py`) and then evaluated with the following metrics (see `notebooks/eval.ipynb`):
 >
 > - **FID** from [pytorch-fid](https://github.com/mseitzer/pytorch-fid)
 > - **CMMD** from [cmmd-pytorch](https://github.com/sayakpaul/cmmd-pytorch)
@@ -100,11 +100,13 @@ Additionally, for the CelebA dataset, rename the main folder to `celeba`, then r
 ## 🎓 Citation
 
 ```bibtex
-@article{ksenofontov2025categorical,
+@inproceedings{
+  ksenofontov2025categorical,
   title={Categorical {Schr\"odinger} Bridge Matching},
-  author={Ksenofontov, Grigoriy and Korotin, Alexander},
-  journal={arXiv preprint arXiv:2502.01416},
-  year={2025}
+  author={Grigoriy Ksenofontov and Alexander Korotin},
+  booktitle={Forty-second International Conference on Machine Learning},
+  year={2025},
+  url={https://openreview.net/forum?id=RBly0nOr2h}
 }
 ```
 
