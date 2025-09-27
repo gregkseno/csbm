@@ -16,9 +16,11 @@ from transformers import PreTrainedTokenizerFast
 import json
 
 from tqdm.auto import tqdm
+
 tqdm.pandas()
 
 from csbm.utils import broadcast, convert_to_numpy, convert_to_torch
+
 
 #########################
 #       MARGINALS       #
@@ -31,75 +33,161 @@ class BaseDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.dataset[idx]
-    
+
     def __len__(self):
         return len(self.dataset)
 
     def continuous_to_discrete(
-        self, 
-        batch: Union[torch.Tensor, np.ndarray], 
-        num_categories: int,
-        quantize_range: Optional[Tuple[Union[int, float], Union[int, float]]] = None
+            self,
+            batch: Union[torch.Tensor, np.ndarray],
+            num_categories: int,
+            quantize_range: Optional[Tuple[Union[int, float], Union[int, float]]] = None
     ):
         if isinstance(batch, np.ndarray):
             batch = torch.tensor(batch)
         if quantize_range is None:
             quantize_range = (-3, 3)
         bin_edges = torch.linspace(
-            quantize_range[0], 
-            quantize_range[1], 
+            quantize_range[0],
+            quantize_range[1],
             num_categories - 1
         )
         discrete_batch = torch.bucketize(batch, bin_edges)
         return discrete_batch
-    
+
     def repeat(self, n: int, max_len: int):
-        self.dataset = self.dataset.repeat((n,) + (1,) * (self.dataset.dim()-1))
+        self.dataset = self.dataset.repeat((n,) + (1,) * (self.dataset.dim() - 1))
         self.dataset = self.dataset[:max_len]
-    
+
+
+class InfoDataset(BaseDataset):
+    def __init__(self, n_samples: int, num_categories: int = 100, eps: float = 1e-12,
+                 sigma: float = 0.5, noise: float = 1.0, train: bool = True):
+        #super().__init__()
+
+        self.n_samples = n_samples
+        self.num_categories = num_categories
+        self.eps = eps
+        self.sigma = sigma
+        self.noise = noise
+        self.train = train
+
+        # Генерируем распределения
+        self._generate_distributions()
+        # Генерируем семплы
+        self._generate_samples()
+    def _generate_distributions(self):
+        """Генерация распределений"""
+        # Равномерное начальное распределение
+        self.pi_0 = torch.ones(self.num_categories) / self.num_categories
+
+        # Стохастическая матрица переходов
+        self.p_cond = self._create_stochastic_matrix()
+
+        # Совместное и маргинальное распределения
+        self.p_joint = self.p_cond * self.pi_0[:, None]
+        self.pi_1 = self.p_joint.sum(dim=0)
+
+    def _create_stochastic_matrix(self):
+        """Создание стохастической матрицы"""
+        i = torch.arange(self.num_categories)[:, None]
+        j = torch.arange(self.num_categories)[None, :]
+        K = torch.exp(-(i - j) ** 2 / (2 * self.sigma ** 2))
+        Xi = torch.rand(self.num_categories, self.num_categories) ** self.noise
+        P0 = K * Xi + self.eps
+        return self._sinkhorn_knopp(P0)
+
+    def _sinkhorn_knopp(self, P, iters=200):
+        """Алгоритм Синхорна-Кноппа"""
+        P = P.clone()
+        for _ in range(iters):
+            # Нормализация по строкам и столбцам
+            #P = P / (P.sum(dim=1, keepdim=True) + self.eps)
+            P = P / (P.sum(dim=0, keepdim=True) + self.eps)
+        return P
+
+    def _generate_samples(self):
+        """Генерация семплов"""
+        # Маргинальные семплы
+        self.x0_marginal = torch.multinomial(self.pi_0, self.n_samples, replacement=True)
+        self.x1_marginal = torch.multinomial(self.pi_1, self.n_samples, replacement=True)
+
+        # Условные семплы (x1 при заданном x0)
+        self.x0_conditional = self.x0_marginal  # Используем те же x0
+        probs = self.p_cond[self.x0_conditional]
+        self.x1_conditional = torch.multinomial(probs, 1).squeeze(-1)
+
+        # Объединяем в датасет
+        self.dataset = torch.stack([
+            self.x0_marginal,
+            self.x1_marginal,
+            self.x1_conditional
+        ], dim=1)
+
+    def __len__(self):
+        return self.n_samples
+
+    def __getitem__(self, idx):
+        return {
+            'x0_marginal': self.dataset[idx, 0],
+            'x1_marginal': self.dataset[idx, 1],
+            'x1_conditional': self.dataset[idx, 2]
+        }
+
+    def get_mutual_info(self):
+        """Вычисление взаимной информации"""
+        mut_info = 0
+        for i in range(self.num_categories):
+            for j in range(self.num_categories):
+                ratio = self.p_joint[i, j] / (self.pi_0[i] * self.pi_1[j] + self.eps)
+                mut_info += self.p_joint[i, j] * torch.log(ratio + self.eps)
+        return mut_info
+
 
 class DiscreteGaussianDataset(BaseDataset):
     def __init__(self, n_samples: int, dim: int, num_categories: int = 100, train: bool = True):
         dataset = torch.randn(size=[n_samples, dim])
         if not train:
             dataset[:4] = torch.tensor([[0.0, 0.0], [1.75, -1.75], [-1.5, 1.5], [2, 2]])
-            
+
         dataset = self.continuous_to_discrete(dataset, num_categories)
         self.dataset = dataset
-    
+
+
 class DiscreteSwissRollDataset(BaseDataset):
     def __init__(self, n_samples: int, noise: float = 0.8, num_categories: int = 100, train: bool = True):
         dataset = make_swiss_roll(
             n_samples=n_samples,
             noise=noise
-        )[0][:, [0, 2]]  / 7.5
+        )[0][:, [0, 2]] / 7.5
         if not train:
             dataset[:4] = torch.tensor([[0.0, 0.0], [1.75, -1.75], [-1.5, 1.5], [2, 2]])
         dataset = self.continuous_to_discrete(dataset, num_categories)
-        self.dataset = dataset      
-    
+        self.dataset = dataset
+
+
 class DiscreteColoredMNISTDataset(BaseDataset):
     def __init__(
-        self, 
-        target_digit: int, 
-        data_dir: str, 
-        train: bool = True, 
-        img_size: int = 32
+            self,
+            target_digit: int,
+            data_dir: str,
+            train: bool = True,
+            img_size: int = 32
     ):
-        
+
         transform = transforms.Compose([
             transforms.Resize((img_size, img_size)),
             transforms.ToTensor(),
             transforms.Lambda(lambda image: self._get_random_colored_images(image))
         ])
-        
+
         dataset = datasets.MNIST(data_dir, train=train, transform=transform, download=True)
         dataset = torch.stack(
             [dataset[i][0] for i in range(len(dataset.targets)) if dataset.targets[i] == target_digit],
             dim=0
         )
         dataset = (255 * dataset).to(dtype=torch.int64)
-        self.dataset = dataset      
+        self.dataset = dataset
 
     def _get_random_colored_images(self, image: torch.Tensor):
         hue = 360 * torch.rand(1)
@@ -108,8 +196,8 @@ class DiscreteColoredMNISTDataset(BaseDataset):
         image_inc = image_diff
         image_dec = image - image_diff
         colored_image = torch.zeros((3, image.shape[1], image.shape[2]))
-        H_i = torch.round(hue / 60) % 6 # type: ignore
-        
+        H_i = torch.round(hue / 60) % 6  # type: ignore
+
         if H_i == 0:
             colored_image[0] = image
             colored_image[1] = image_inc
@@ -134,7 +222,7 @@ class DiscreteColoredMNISTDataset(BaseDataset):
             colored_image[0] = image
             colored_image[1] = image_min
             colored_image[2] = image_dec
-        
+
         return colored_image
 
 
@@ -154,28 +242,29 @@ class ImageFolder(datasets.ImageFolder):
 
         return sample, path
 
+
 class CelebaDataset(BaseDataset):
     transform: Optional[transforms.Compose] = None
-    
+
     def __init__(
-        self, 
-        sex: Literal['male', 'female', 'both'], 
-        data_dir: str,
-        size: Optional[int] = None, 
-        train: bool = True,
-        split: int | float = 162771, # from original dataset
-        use_quantized: bool = True,
-        return_names: bool = False
+            self,
+            sex: Literal['male', 'female', 'both'],
+            data_dir: str,
+            size: Optional[int] = None,
+            train: bool = True,
+            split: int | float = 162771,  # from original dataset
+            use_quantized: bool = True,
+            return_names: bool = False
     ):
         self.train = train
         self.use_quantized = use_quantized
         self.size = size
         self.return_names = return_names
-        self.data_dir= data_dir
+        self.data_dir = data_dir
 
         subset = pd.read_csv(os.path.join(data_dir, 'celeba', 'list_attr_celeba.csv'))
 
-        if isinstance(split, int): 
+        if isinstance(split, int):
             # this logic mathches setup of previously trained models
             subset = subset.iloc[:split] if train else subset.iloc[split:]
             if sex == 'male':
@@ -189,7 +278,7 @@ class CelebaDataset(BaseDataset):
             male_subset = subset[subset['Male'] != -1]
             female_subset = subset[subset['Male'] == -1]
             male_split_index, female_split_index = int(len(male_subset) * split), int(len(female_subset) * split)
-            
+
             male_subset = male_subset[:male_split_index] if train else male_subset.iloc[male_split_index:]
             female_subset = female_subset[:female_split_index] if train else female_subset.iloc[female_split_index:]
 
@@ -201,7 +290,6 @@ class CelebaDataset(BaseDataset):
                 subset = pd.concat([male_subset, female_subset], ignore_index=True)
                 subset = subset.sort_values(by='image_id').reset_index(drop=True)
 
-
         if use_quantized:
             sub_folder = 'quantized'
             subset['image_id'] = subset['image_id'].str.removesuffix('.jpg') + '.npy'
@@ -209,7 +297,8 @@ class CelebaDataset(BaseDataset):
             sub_folder = 'raw'
 
         self.image_names = subset['image_id']
-        self.dataset = [os.path.join(data_dir, 'celeba', 'img_align_celeba', sub_folder, image) for image in self.image_names.tolist()]
+        self.dataset = [os.path.join(data_dir, 'celeba', 'img_align_celeba', sub_folder, image) for image in
+                        self.image_names.tolist()]
 
     def __getitem__(self, index):
         if self.train and self.use_quantized:
@@ -224,33 +313,33 @@ class CelebaDataset(BaseDataset):
             image = transform(image)
 
         if self.return_names:
-           return image, self.dataset[index].split('/')[-1]
+            return image, self.dataset[index].split('/')[-1]
         return image
 
     def __len__(self):
         return len(self.dataset)
-    
+
     def get_by_filename(self, index):
         transform = transforms.Compose([
-                transforms.Resize((self.size, self.size)),
-                transforms.ToTensor(),
+            transforms.Resize((self.size, self.size)),
+            transforms.ToTensor(),
         ])
         # image = self.image_names[self.image_names == index].item()
         image = Image.open(os.path.join(self.data_dir, 'celeba', 'img_align_celeba', 'raw', index))
         image = image.convert('RGB')
         image = transform(image)
         return image
-    
+
     def repeat(self, n: int, max_len: int):
         self.dataset = self.dataset * n
         self.dataset = self.dataset[:max_len]
 
     @staticmethod
     def quantize_train(
-        model: nn.Module, 
-        data_dir: str,
-        size: int = 128, 
-        batch_size: int = 32,
+            model: nn.Module,
+            data_dir: str,
+            size: int = 128,
+            batch_size: int = 32,
     ):
         load_transform = transforms.Compose([
             transforms.Resize((size, size)),
@@ -259,7 +348,8 @@ class CelebaDataset(BaseDataset):
 
         data_dir = os.path.join(data_dir, 'celeba', 'img_align_celeba')
         save_path = os.path.join(data_dir, 'quantized')
-        dataset = ImageFolder(data_dir, transform=load_transform, allow_empty=True) # allow_eppty because it will be handled in next line
+        dataset = ImageFolder(data_dir, transform=load_transform,
+                              allow_empty=True)  # allow_eppty because it will be handled in next line
         if 'quantized' in dataset.classes:
             raise FileExistsError('Folder with quantized images already exists!')
         else:
@@ -272,20 +362,20 @@ class CelebaDataset(BaseDataset):
             for encoded_image, image_path in zip(encoded_images, image_paths):
                 file_name = image_path.split('/')[-1].split('.')[0]
                 image_path = os.path.join(save_path, file_name)
-                np.save(image_path, encoded_image)  
+                np.save(image_path, encoded_image)
 
 
 class AFHQDataset(BaseDataset):
     transform: Optional[transforms.Compose] = None
-    
+
     def __init__(
-        self, 
-        animal_type: Literal['cat', 'wild', 'dog'], 
-        data_dir: str,
-        size: Optional[int] = None, 
-        train: bool = True,
-        use_quantized: bool = True,
-        return_names: bool = False
+            self,
+            animal_type: Literal['cat', 'wild', 'dog'],
+            data_dir: str,
+            size: Optional[int] = None,
+            train: bool = True,
+            use_quantized: bool = True,
+            return_names: bool = False
     ):
         self.train = train
         self.use_quantized = use_quantized
@@ -317,32 +407,32 @@ class AFHQDataset(BaseDataset):
             image = transform(image)
 
         if self.return_names:
-           return image, self.dataset[index].split('/')[-1]
+            return image, self.dataset[index].split('/')[-1]
         return image
 
     def __len__(self):
         return len(self.dataset)
-    
+
     def get_by_filename(self, index):
         transform = transforms.Compose([
-                transforms.Resize((self.size, self.size)),
-                transforms.ToTensor(),
+            transforms.Resize((self.size, self.size)),
+            transforms.ToTensor(),
         ])
         image = Image.open(os.path.join(self.data_dir, 'afhq', self.animal_type, index))
-        image = image.convert('RGB')    
+        image = image.convert('RGB')
         image = transform(image)
         return image
-    
+
     def repeat(self, n: int, max_len: int):
         self.dataset = self.dataset * n
         self.dataset = self.dataset[:max_len]
 
     @staticmethod
     def quantize_train(
-        model: nn.Module, 
-        data_dir: str,
-        size: int = 128, 
-        batch_size: int = 32,
+            model: nn.Module,
+            data_dir: str,
+            size: int = 128,
+            batch_size: int = 32,
     ):
         load_transform = transforms.Compose([
             transforms.Resize((size, size)),
@@ -350,7 +440,8 @@ class AFHQDataset(BaseDataset):
         ])
 
         data_dir = os.path.join(data_dir, 'afhq')
-        dataset = ImageFolder(data_dir, transform=load_transform, allow_empty=True) # allow_eppty because it will be handled in next line
+        dataset = ImageFolder(data_dir, transform=load_transform,
+                              allow_empty=True)  # allow_eppty because it will be handled in next line
 
         dataloader = DataLoader(dataset, batch_size=batch_size)
         for images, image_paths in tqdm(dataloader, file=sys.stdout):
@@ -366,12 +457,12 @@ class AFHQDataset(BaseDataset):
 
 class YelpDataset(BaseDataset):
     def __init__(
-        self, 
-        sentiment: Literal['positive', 'negative', 'all'],
-        data_dir: str, 
-        tokenizer: Optional[PreTrainedTokenizerFast] = None,
-        max_length: Optional[int] = None,
-        split: Literal['train', 'eval', 'test', 'all', 'with_reference'] = 'train',
+            self,
+            sentiment: Literal['positive', 'negative', 'all'],
+            data_dir: str,
+            tokenizer: Optional[PreTrainedTokenizerFast] = None,
+            max_length: Optional[int] = None,
+            split: Literal['train', 'eval', 'test', 'all', 'with_reference'] = 'train',
     ):
         self.sentiment = sentiment
         self.tokenizer = tokenizer
@@ -381,7 +472,7 @@ class YelpDataset(BaseDataset):
             assert max_length is not None, 'max_length should be set if tokenizer is set!'
 
         self.file_path = os.path.join(data_dir, 'yelp', f'yelp_small_{split}.jsonl')
-        
+
         self.file_positions = []
         with open(self.file_path, 'r') as f:
             pos, line = f.tell(), f.readline()
@@ -395,7 +486,7 @@ class YelpDataset(BaseDataset):
                 elif sentiment == 'all':
                     self.file_positions.append(pos)
                 pos, line = f.tell(), f.readline()
-    
+
     def __len__(self):
         return len(self.file_positions)
 
@@ -409,28 +500,28 @@ class YelpDataset(BaseDataset):
         text = data['text']
         if self.tokenizer is not None:
             text = self.tokenizer.encode(
-                text=text, 
-                padding='max_length', 
-                truncation=True, 
+                text=text,
+                padding='max_length',
+                truncation=True,
                 max_length=self.max_length,
                 return_tensors='pt',
                 return_token_type_ids=False,
                 return_attention_mask=False,
-            ).squeeze() # type: ignore
+            ).squeeze()  # type: ignore
 
             if self.split == 'with_reference':
                 reference = data['reference']
                 reference = self.tokenizer.encode(
-                    text=reference, 
-                    padding='max_length', 
-                    truncation=True, 
+                    text=reference,
+                    padding='max_length',
+                    truncation=True,
                     max_length=self.max_length,
                     return_tensors='pt',
                     return_token_type_ids=False,
                     return_attention_mask=False,
-                ).squeeze() # type: ignore
+                ).squeeze()  # type: ignore
                 return text, reference
-            
+
         return text
 
     def repeat(self, n: int, max_len: int):
@@ -445,12 +536,12 @@ class YelpDataset(BaseDataset):
 
 class AmazonDataset(BaseDataset):
     def __init__(
-        self, 
-        sentiment: Literal['positive', 'negative', 'all'],
-        data_dir: str, 
-        tokenizer: Optional[PreTrainedTokenizerFast] = None,
-        max_length: Optional[int] = None,
-        split: Literal['train', 'eval', 'test', 'all'] = 'train',
+            self,
+            sentiment: Literal['positive', 'negative', 'all'],
+            data_dir: str,
+            tokenizer: Optional[PreTrainedTokenizerFast] = None,
+            max_length: Optional[int] = None,
+            split: Literal['train', 'eval', 'test', 'all'] = 'train',
     ):
         self.sentiment = sentiment
         self.tokenizer = tokenizer
@@ -460,7 +551,7 @@ class AmazonDataset(BaseDataset):
             assert max_length is not None, 'max_length should be set if tokenizer is set!'
 
         self.file_path = os.path.join(data_dir, 'amazon', f'amazon_small_{split}.jsonl')
-        
+
         self.file_positions = []
         with open(self.file_path, 'r') as f:
             pos, line = f.tell(), f.readline()
@@ -473,7 +564,7 @@ class AmazonDataset(BaseDataset):
                 elif sentiment == 'all':
                     self.file_positions.append(pos)
                 pos, line = f.tell(), f.readline()
-    
+
     def __len__(self):
         return len(self.file_positions)
 
@@ -487,15 +578,15 @@ class AmazonDataset(BaseDataset):
         text = data['text']
         if self.tokenizer is not None:
             text = self.tokenizer.encode(
-                text=text, 
-                padding='max_length', 
-                truncation=True, 
+                text=text,
+                padding='max_length',
+                truncation=True,
                 max_length=self.max_length,
                 return_tensors='pt',
                 return_token_type_ids=False,
                 return_attention_mask=False,
-            ).squeeze() # type: ignore
-            
+            ).squeeze()  # type: ignore
+
         return text
 
     def repeat(self, n: int, max_len: int):
@@ -510,11 +601,11 @@ class AmazonDataset(BaseDataset):
 
 class CouplingDataset(BaseDataset):
     def __init__(
-        self, 
-        dataset: BaseDataset, 
-        conditional: BaseDataset, 
-        type: Literal['independent', 'prior'] = 'independent',
-        prior: Optional['Prior'] = None
+            self,
+            dataset: BaseDataset,
+            conditional: BaseDataset,
+            type: Literal['independent', 'prior'] = 'independent',
+            prior: Optional['Prior'] = None
     ):
         self.type = type
         self.prior = prior
@@ -539,7 +630,7 @@ class CouplingDataset(BaseDataset):
             raise NotImplementedError('Only independent coupling is now supported!')
         return x, y
 
-    
+
 #########################
 #         Priors        #
 #########################
@@ -547,21 +638,21 @@ def get_cum_matrices(num_timesteps: int, onestep_matrix: torch.Tensor) -> torch.
     num_categories = onestep_matrix.shape[0]
     cum_matrices = torch.empty(size=(num_timesteps, num_categories, num_categories), dtype=onestep_matrix.dtype)
     cum_matrices[0] = torch.eye(num_categories, dtype=onestep_matrix.dtype)
-    
+
     for timestep in range(1, num_timesteps):
-        cum_matrices[timestep] = cum_matrices[timestep-1] @ onestep_matrix
-    
+        cum_matrices[timestep] = cum_matrices[timestep - 1] @ onestep_matrix
+
     assert onestep_matrix.shape == cum_matrices[0].shape, f'Wrong shape!'
     return cum_matrices
 
 
 def uniform_prior(
-    alpha: float, 
-    num_categories: int, 
-    num_timesteps: int,
-    num_skip_steps: int
+        alpha: float,
+        num_categories: int,
+        num_timesteps: int,
+        num_skip_steps: int
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    p_onestep_mat = torch.tensor([alpha] * num_categories**2, dtype=torch.float64)
+    p_onestep_mat = torch.tensor([alpha] * num_categories ** 2, dtype=torch.float64)
     p_onestep_mat = p_onestep_mat / (num_categories - 1)
     p_onestep_mat = p_onestep_mat.view(num_categories, num_categories)
     p_onestep_mat -= torch.diag(torch.diag(p_onestep_mat))
@@ -574,17 +665,18 @@ def uniform_prior(
 
 
 def von_mises_prior(
-    alpha: float,
-    num_categories: int, 
-    num_timesteps: int,
-    num_skip_steps: int
+        alpha: float,
+        num_categories: int,
+        num_timesteps: int,
+        num_skip_steps: int
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     angles = np.linspace(0, 2 * np.pi, num_categories, endpoint=False)
     p_onestep_mat = np.zeros((num_categories, num_categories))
 
     for i, current_angle in enumerate(angles):
         for j, next_angle in enumerate(angles):
-            p_onestep_mat[i, j] = np.exp((1 / (alpha**2 * (num_categories - 1)**2)) * np.cos(next_angle - current_angle))
+            p_onestep_mat[i, j] = np.exp(
+                (1 / (alpha ** 2 * (num_categories - 1) ** 2)) * np.cos(next_angle - current_angle))
         p_onestep_mat[i] /= np.sum(p_onestep_mat[i])
     p_onestep_mat = np.linalg.matrix_power(p_onestep_mat, n=num_skip_steps)
 
@@ -595,53 +687,53 @@ def von_mises_prior(
 
 
 def gaussian_prior(
-    alpha: float,
-    num_categories: int, 
-    num_timesteps: int, 
-    num_skip_steps: int,
-    use_doubly_stochastic: bool = True
+        alpha: float,
+        num_categories: int,
+        num_timesteps: int,
+        num_skip_steps: int,
+        use_doubly_stochastic: bool = True
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     p_onestep_mat = np.zeros([num_categories, num_categories], dtype=np.float64)
     max_distance = num_categories - 1
     if not use_doubly_stochastic:
         indices = np.arange(num_categories)[None, ...]
-        values = (-4 * (indices - indices.T)**2) / ((alpha * max_distance)**2)
+        values = (-4 * (indices - indices.T) ** 2) / ((alpha * max_distance) ** 2)
         p_onestep_mat = softmax(values, axis=1)
-    else: # this logic mathcing D3PM article
-        norm_const = -4 * (np.arange(-max_distance, max_distance+2, step=1, dtype=np.float64) ** 2)
-        norm_const /= (alpha * max_distance)**2
+    else:  # this logic mathcing D3PM article
+        norm_const = -4 * (np.arange(-max_distance, max_distance + 2, step=1, dtype=np.float64) ** 2)
+        norm_const /= (alpha * max_distance) ** 2
         norm_const = np.exp(norm_const).sum()
         for i in range(num_categories):
             for j in range(num_categories):
                 if i == j:
                     continue
-                value = np.exp(-(4 * (i - j)**2) / (alpha * max_distance)**2)
+                value = np.exp(-(4 * (i - j) ** 2) / (alpha * max_distance) ** 2)
                 p_onestep_mat[i][j] = value / norm_const
         for i in range(num_categories):
-            p_onestep_mat[i][i] = 1 - p_onestep_mat[i].sum() 
+            p_onestep_mat[i][i] = 1 - p_onestep_mat[i].sum()
 
     p_onestep_mat = np.linalg.matrix_power(p_onestep_mat, n=num_skip_steps)
-    p_onestep_mat = torch.from_numpy(p_onestep_mat) # .softmax(dim=1)
+    p_onestep_mat = torch.from_numpy(p_onestep_mat)  # .softmax(dim=1)
     p_cum_mats = get_cum_matrices(num_timesteps + 2, p_onestep_mat)
 
     return p_onestep_mat.transpose(0, 1), p_cum_mats
 
 
 def centroid_gaussian_prior(
-    alpha: float,
-    num_categories: int,
-    num_timesteps: int, 
-    num_skip_steps: int,
-    centroids: torch.Tensor | np.ndarray # num_categories x seq_length
+        alpha: float,
+        num_categories: int,
+        num_timesteps: int,
+        num_skip_steps: int,
+        centroids: torch.Tensor | np.ndarray  # num_categories x seq_length
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     centroids = convert_to_numpy(centroids)
     distances = cdist(centroids, centroids, metric='euclidean')  # num_categories x num_categories
     max_distance = distances.max()
 
-    p_onestep_mat = softmax(-distances / (alpha * max_distance)**2, axis=1)
+    p_onestep_mat = softmax(-distances / (alpha * max_distance) ** 2, axis=1)
     p_onestep_mat = np.linalg.matrix_power(p_onestep_mat, n=num_skip_steps)
 
-    p_onestep_mat = torch.from_numpy(p_onestep_mat) 
+    p_onestep_mat = torch.from_numpy(p_onestep_mat)
     p_cum_mats = get_cum_matrices(num_timesteps + 2, p_onestep_mat)
 
     return p_onestep_mat.transpose(0, 1), p_cum_mats
@@ -649,29 +741,29 @@ def centroid_gaussian_prior(
 
 # Cumulative returns with following pattern
 # 0         1           2           ...         N           N+1
-# 0->0      0->1        0->2        ...         0->N        0->N+1       
+# 0->0      0->1        0->2        ...         0->N        0->N+1
 
 # Onestep returns with following pattern
 # 0         1           2           ...         N           N+1
-# 0->0      0->1        1->2        ...         N-1->N      N->N+1     
+# 0->0      0->1        1->2        ...         N-1->N      N->N+1
 
 # Inherit from nn.Module to automatically do device casting
 class Prior(nn.Module):
     def __init__(
-        self, 
-        alpha: float,
-        num_categories: int,
-        num_timesteps: int,
-        num_skip_steps: int,
-        prior_type: Literal[
-            'uniform', 
-            'gaussian',
-            'centroid_gaussian',
-            'von_mises',
-        ] = 'uniform',
-        centroids: Optional[torch.Tensor] = None,
-        eps: float = 1e-20,
-        dtype: torch.dtype = torch.float32
+            self,
+            alpha: float,
+            num_categories: int,
+            num_timesteps: int,
+            num_skip_steps: int,
+            prior_type: Literal[
+                'uniform',
+                'gaussian',
+                'centroid_gaussian',
+                'von_mises',
+            ] = 'uniform',
+            centroids: Optional[torch.Tensor] = None,
+            eps: float = 1e-20,
+            dtype: torch.dtype = torch.float32
     ) -> None:
         super().__init__()
         self.alpha = alpha
@@ -694,37 +786,37 @@ class Prior(nn.Module):
             raise NotImplementedError(f'Got unknown prior: {prior_type} or centroids is None!')
         self.register_buffer("p_onestep", p_onestep.to(dtype=dtype))
         self.register_buffer("p_cum", p_cum.to(dtype=dtype))
-        
+
     def extract(
-        self, 
-        mat_type: Literal['onestep', 'cumulative'], 
-        t: torch.Tensor, 
-        *,
-        row_id: Optional[torch.Tensor] = None,
-        column_id: Optional[torch.Tensor] = None
+            self,
+            mat_type: Literal['onestep', 'cumulative'],
+            t: torch.Tensor,
+            *,
+            row_id: Optional[torch.Tensor] = None,
+            column_id: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        """Extracts row/column/element from transition matrix."""     
+        """Extracts row/column/element from transition matrix."""
         if row_id is not None and column_id is not None:
             t = broadcast(t, row_id.dim() - 1)
-            if mat_type  == 'onestep':
+            if mat_type == 'onestep':
                 return self.p_onestep[row_id, column_id]
-            else: 
+            else:
                 return self.p_cum[t, row_id, column_id]
-            
+
         elif row_id is not None and column_id is None:
             t = broadcast(t, row_id.dim() - 1)
-            if mat_type  == 'onestep':
+            if mat_type == 'onestep':
                 return self.p_onestep[row_id]
-            else: 
+            else:
                 return self.p_cum[t, row_id, :]
-        
+
         elif row_id is None and column_id is not None:
             t = broadcast(t, column_id.dim() - 1)
-            if mat_type  == 'onestep':
+            if mat_type == 'onestep':
                 return self.p_onestep[:, column_id]
             else:
                 return self.p_cum[t, :, column_id]
-        else:   
+        else:
             raise ValueError('row_id and column_id cannot be None both!')
 
     def sample_bridge(self, x_start: torch.Tensor, x_end: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
@@ -733,7 +825,7 @@ class Prior(nn.Module):
         p_t_end = self.extract('cumulative', self.num_timesteps + 1 - t, column_id=x_end)
         log_probs = torch.log(p_start_t + self.eps) + torch.log(p_t_end + self.eps)
         log_probs = log_probs - log_probs.logsumexp(dim=-1, keepdim=True)
-        
+
         noise = torch.rand_like(log_probs)
         noise = torch.clamp(noise, min=torch.finfo(noise.dtype).tiny, max=1.)
         gumbel_noise = -torch.log(-torch.log(noise))
@@ -746,7 +838,7 @@ class Prior(nn.Module):
         x_t = torch.where(is_first_step, x_start, x_t)
 
         return x_t
-    
+
     def bridge_logits(self, x_start: torch.Tensor, x_end: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         r"""Calculates log probability of $p(x_{t} | x_{0}, x_{1})$."""
         p_start_t = self.extract('cumulative', t, row_id=x_start)
@@ -755,21 +847,22 @@ class Prior(nn.Module):
 
         log_probs = log_probs - log_probs.logsumexp(dim=-1, keepdim=True)
         return log_probs
-    
+
     def posterior_logits(
-        self, 
-        x_start: torch.Tensor, 
-        x_t: torch.Tensor, 
-        t: torch.Tensor, 
-        logits: bool = False
+            self,
+            x_start: torch.Tensor,
+            x_t: torch.Tensor,
+            t: torch.Tensor,
+            logits: bool = False
     ) -> torch.Tensor:
         r"""Calculates logits of $p(x_{t-1} | x_{t}, x_{0})$.
-        If logits is True, the output is summed over x_0 and transition matrix returned.""" 
+        If logits is True, the output is summed over x_0 and transition matrix returned."""
         if not logits:
             x_start_logits = torch.log(torch.nn.functional.one_hot(x_start, self.num_categories) + self.eps)
         else:
             x_start_logits = x_start.clone()
-        assert x_start_logits.shape == x_t.shape + (self.num_categories,), f"x_start_logits.shape: {x_start_logits.shape}, x_t.shape: {x_t.shape}"
+        assert x_start_logits.shape == x_t.shape + (
+        self.num_categories,), f"x_start_logits.shape: {x_start_logits.shape}, x_t.shape: {x_t.shape}"
         x_start_logits = x_start_logits.to(self.dtype)
         # fact1 is "guess of x_{t}" from x_{t-1}
         fact1 = self.extract('onestep', t, row_id=x_t)
@@ -778,10 +871,9 @@ class Prior(nn.Module):
         x_start_probs = x_start_logits.softmax(dim=-1)  # bs, ..., num_categories
         fact2 = torch.einsum("b...c,bcd->b...d", x_start_probs, self.p_cum[t - 1])
         p_posterior_logits = torch.log(fact1 + self.eps) + torch.log(fact2 + self.eps)
-        p_posterior_logits = p_posterior_logits - p_posterior_logits.logsumexp(dim=-1, keepdim=True) # Normalize
-        
+        p_posterior_logits = p_posterior_logits - p_posterior_logits.logsumexp(dim=-1, keepdim=True)  # Normalize
+
         # Use `torch.where` because when `t == 1` x_start_logits are actually x_0 already
         is_first_step = broadcast(t, x_t.dim()) == 1
         p_posterior_logits = torch.where(is_first_step, x_start_logits, p_posterior_logits)
         return p_posterior_logits
-
